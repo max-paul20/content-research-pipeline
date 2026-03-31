@@ -1,0 +1,8 @@
+.env
+__pycache__/
+.pytest_cache/
+.DS_Store
+.claude/
+content-research-pipeline/.obsidian/
+data/
+logs/
