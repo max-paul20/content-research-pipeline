@@ -11,9 +11,7 @@ target the two-tier architecture:
 from __future__ import annotations
 
 from textwrap import dedent
-from typing import Dict, Iterable, Sequence
-
-SUPPORTED_CAMPUSES = ("uofa", "calpoly")
+from typing import Dict, Iterable, Optional, Sequence
 
 IDENTITY_BLOCK = dedent(
     """
@@ -92,31 +90,59 @@ UNIGLISS_STRATEGY: Dict[str, Sequence[str]] = {
     ),
 }
 
-CAMPUS_CONTEXT: Dict[str, Dict[str, Sequence[str]]] = {
+CAMPUS_REGISTRY: Dict[str, Dict[str, object]] = {
     "uofa": {
-        "Campus": ("University of Arizona",),
-        "Local Signals": (
-            "Lean into Greek life, game day energy, Arizona Stadium references, and recognizable Tucson social behavior.",
-            "Use places people instantly clock as campus-coded: Old Main, 4th Ave, Arizona Stadium, and Tucson-specific surroundings.",
-            "Beauty culture can skew bold, social, and event-driven, especially around sorority life, football weekends, and going-out looks.",
+        "display_name": "Arizona",
+        "emoji": "\U0001f335",
+        "hashtags": (
+            "uofa",
+            "beardown",
+            "wildcats",
+            "uarizona",
+            "universityofarizona",
+            "tucsonaz",
         ),
-        "Content Hooks": (
-            "Back-to-school beauty, rush-week glam, game day nails, lash maintenance, and heat-proof looks all fit the market.",
-            "Recognizable language and scenery should make students say, 'This is so U of A.'",
-        ),
+        "context": {
+            "Campus": ("University of Arizona",),
+            "Local Signals": (
+                "Lean into Greek life, game day energy, Arizona Stadium references, and recognizable Tucson social behavior.",
+                "Use places people instantly clock as campus-coded: Old Main, 4th Ave, Arizona Stadium, and Tucson-specific surroundings.",
+                "Beauty culture can skew bold, social, and event-driven, especially around sorority life, football weekends, and going-out looks.",
+            ),
+            "Content Hooks": (
+                "Back-to-school beauty, rush-week glam, game day nails, lash maintenance, and heat-proof looks all fit the market.",
+                "Recognizable language and scenery should make students say, 'This is so U of A.'",
+            ),
+        },
     },
     "calpoly": {
-        "Campus": ("Cal Poly SLO",),
-        "Local Signals": (
-            "Use Cal Poly's Learn by Doing culture, a more relaxed coastal vibe, and highly specific local touchpoints.",
-            "Anchor scenes in Higuera St, Bishop Peak, Dexter Lawn, Mustang Memorial, downtown SLO, and other instantly familiar spots.",
-            "Beauty culture should feel polished but effortless, with content that fits beach days, hikes, coffee runs, and student routines.",
+        "display_name": "Cal Poly",
+        "emoji": "\U0001f40e",
+        "hashtags": (
+            "calpoly",
+            "calpolyslo",
+            "slo",
+            "sanluisobispo",
+            "mustangs",
         ),
-        "Content Hooks": (
-            "Natural beauty, low-maintenance glam, practical routines, and creator ideas tied to student life perform best.",
-            "Recognizable details should make students feel the script belongs to Cal Poly rather than any generic California campus.",
-        ),
+        "context": {
+            "Campus": ("Cal Poly SLO",),
+            "Local Signals": (
+                "Use Cal Poly's Learn by Doing culture, a more relaxed coastal vibe, and highly specific local touchpoints.",
+                "Anchor scenes in Higuera St, Bishop Peak, Dexter Lawn, Mustang Memorial, downtown SLO, and other instantly familiar spots.",
+                "Beauty culture should feel polished but effortless, with content that fits beach days, hikes, coffee runs, and student routines.",
+            ),
+            "Content Hooks": (
+                "Natural beauty, low-maintenance glam, practical routines, and creator ideas tied to student life perform best.",
+                "Recognizable details should make students feel the script belongs to Cal Poly rather than any generic California campus.",
+            ),
+        },
     },
+}
+
+SUPPORTED_CAMPUSES = tuple(CAMPUS_REGISTRY.keys())
+CAMPUS_CONTEXT: Dict[str, Dict[str, Sequence[str]]] = {
+    campus: details["context"] for campus, details in CAMPUS_REGISTRY.items()
 }
 
 GEMINI_ANALYSIS_INSTRUCTIONS = dedent(
@@ -282,6 +308,7 @@ def _bullets(items: Sequence[str]) -> Sequence[str]:
 
 
 __all__ = [
+    "CAMPUS_REGISTRY",
     "SUPPORTED_CAMPUSES",
     "TIKTOK_2026_KNOWLEDGE",
     "INSTAGRAM_REELS_2026_KNOWLEDGE",

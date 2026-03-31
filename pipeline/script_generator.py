@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 import requests
 
 from . import config
-from .knowledge_base import get_sonnet_script_prompt
+from .knowledge_base import CAMPUS_REGISTRY, SUPPORTED_CAMPUSES, get_sonnet_script_prompt
 from .scrapers._common import utc_now_iso
 
 logger = logging.getLogger(__name__)
@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 def generate_scripts(
     analyzed_posts: List[Dict[str, Any]],
     test_mode: bool = False,
+    target_campus: str | None = None,
 ) -> List[Dict[str, Any]]:
     """Generate campus-specific creative briefs from analyzed posts.
 
@@ -29,35 +30,47 @@ def generate_scripts(
         analyzed_posts: Enriched post dicts from the analyzer, each containing
             ``recommended_campus``, ``composite_score``, and analysis fields.
         test_mode: If ``True``, skip API calls and return mock briefs.
+        target_campus: Optional campus key to limit generation to a single
+            campus bucket.
 
     Returns:
         A list of script dicts, each containing ``campus``, ``trend_type``,
         ``brief``, ``source_url``, and ``generated_at``.
     """
 
+    campuses = _resolve_target_campuses(target_campus)
+
     if test_mode or config.is_test_mode():
-        return _mock_generate(analyzed_posts)
+        return _mock_generate(analyzed_posts, campuses)
 
     if config._is_placeholder(config.ANTHROPIC_API_KEY):
         logger.warning("ANTHROPIC_API_KEY is missing or placeholder; skipping generation.")
         return []
 
     arizona, calpoly = _split_by_campus(analyzed_posts)
+    buckets = {"uofa": arizona, "calpoly": calpoly}
     scripts: List[Dict[str, Any]] = []
 
-    # Arizona batch first
-    for post in arizona[: config.SCRIPTS_PER_CAMPUS]:
-        script = _generate_one(post, "uofa")
-        if script:
-            scripts.append(script)
-
-    # Cal Poly batch second
-    for post in calpoly[: config.SCRIPTS_PER_CAMPUS]:
-        script = _generate_one(post, "calpoly")
-        if script:
-            scripts.append(script)
+    for campus in campuses:
+        for post in buckets[campus][: config.SCRIPTS_PER_CAMPUS]:
+            script = _generate_one(post, campus)
+            if script:
+                scripts.append(script)
 
     return scripts
+
+
+def _resolve_target_campuses(target_campus: str | None) -> Tuple[str, ...]:
+    """Return the campus buckets that should be generated for this run."""
+
+    if target_campus is None:
+        return SUPPORTED_CAMPUSES
+
+    normalized = target_campus.strip().lower()
+    if normalized not in SUPPORTED_CAMPUSES:
+        supported = ", ".join(SUPPORTED_CAMPUSES)
+        raise ValueError(f"Unsupported campus '{target_campus}'. Expected one of: {supported}.")
+    return (normalized,)
 
 
 def _split_by_campus(
@@ -172,20 +185,24 @@ def _extract_brief(raw_text: str) -> str:
     return ""
 
 
-def _mock_generate(posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _mock_generate(
+    posts: List[Dict[str, Any]],
+    campuses: Tuple[str, ...],
+) -> List[Dict[str, Any]]:
     """Return mock briefs for test mode."""
 
     arizona, calpoly = _split_by_campus(posts)
     scripts: List[Dict[str, Any]] = []
-
-    campus_emoji = {"uofa": "\U0001f335", "calpoly": "\U0001f40e"}
-    campus_names = {"uofa": "Arizona", "calpoly": "Cal Poly"}
+    buckets = {"uofa": arizona, "calpoly": calpoly}
     campus_spots = {
         "uofa": ["Old Main", "4th Ave", "Arizona Stadium"],
         "calpoly": ["Higuera St", "Bishop Peak", "Dexter Lawn"],
     }
 
-    for campus_key, bucket in [("uofa", arizona), ("calpoly", calpoly)]:
+    for campus_key in campuses:
+        bucket = buckets[campus_key]
+        campus_details = CAMPUS_REGISTRY[campus_key]
+        campus_hashtag = str(campus_details["hashtags"][0])
         for post in bucket[: config.SCRIPTS_PER_CAMPUS]:
             spot = campus_spots[campus_key][len(scripts) % len(campus_spots[campus_key])]
             scripts.append(
@@ -193,16 +210,16 @@ def _mock_generate(posts: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     "campus": campus_key,
                     "trend_type": post.get("trend_type", "format_driven"),
                     "brief": (
-                        f"{campus_emoji[campus_key]} HOOK: POV you just discovered "
+                        f"\U0001f3ac HOOK: POV you just discovered "
                         f"the best beauty hack at {spot}\n"
                         f"\U0001f4dd KEY BEATS:\n"
                         f"- Quick before/after at {spot}\n"
                         f"- Show the product close-up\n"
                         f"- Friend reaction shot\n"
-                        f"\U0001f5e3\ufe0f DIALOGUE: 'I found her on Unigliss btw'\n"
+                        f"\U0001f5e3\ufe0f SUGGESTED DIALOGUE:\n"
+                        f"\"I found her on Unigliss btw\"\n"
                         f"\U0001f3b5 AUDIO: {post.get('audio_name', 'trending sound')}\n"
-                        f"#\ufe0f\u20e3 HASHTAGS: #beauty #{campus_names[campus_key].lower()} "
-                        f"#unigliss #grwm\n"
+                        f"#\ufe0f\u20e3 HASHTAGS: #beauty #{campus_hashtag} #unigliss #grwm #campusglam\n"
                         f"\U0001f4cd CAMPUS TIE-IN: {spot}"
                     ),
                     "source_url": post.get("url", ""),

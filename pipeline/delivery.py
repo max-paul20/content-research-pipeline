@@ -13,13 +13,12 @@ from typing import Any, Dict, List
 import requests
 
 from . import config
+from .knowledge_base import CAMPUS_REGISTRY
 
 logger = logging.getLogger(__name__)
 
-_CAMPUS_EMOJI = {"uofa": "\U0001f335", "calpoly": "\U0001f40e"}
-_CAMPUS_DISPLAY = {"uofa": "Arizona", "calpoly": "Cal Poly"}
 _MAX_MSGS_PER_MINUTE = 20
-_MSG_INTERVAL = 60.0 / _MAX_MSGS_PER_MINUTE
+_MSG_INTERVAL = max(3.5, 60.0 / _MAX_MSGS_PER_MINUTE)
 
 
 def deliver_scripts(
@@ -54,6 +53,8 @@ def deliver_scripts(
     sent = 0
     failed = 0
     msg_count = 0
+    separator_needed = bool(arizona and calpoly)
+    total_messages = len(arizona) + len(calpoly) + (1 if separator_needed else 0)
 
     # Arizona first
     for script in arizona:
@@ -64,13 +65,15 @@ def deliver_scripts(
         else:
             failed += 1
         msg_count += 1
-        _rate_limit(msg_count)
+        if msg_count < total_messages:
+            _rate_limit(dry=dry)
 
     # Separator between campuses
-    if arizona and calpoly:
+    if separator_needed:
         _send_or_log("---", dry)
         msg_count += 1
-        _rate_limit(msg_count)
+        if msg_count < total_messages:
+            _rate_limit(dry=dry)
 
     # Cal Poly second
     for script in calpoly:
@@ -81,7 +84,8 @@ def deliver_scripts(
         else:
             failed += 1
         msg_count += 1
-        _rate_limit(msg_count)
+        if msg_count < total_messages:
+            _rate_limit(dry=dry)
 
     logger.info("Delivery complete: %d sent, %d failed", sent, failed)
     return {"sent": sent, "failed": failed}
@@ -91,8 +95,9 @@ def _format_message(script: Dict[str, Any]) -> str:
     """Format a script dict as a Telegram message."""
 
     campus = script.get("campus", "")
-    emoji = _CAMPUS_EMOJI.get(campus, "")
-    display = _CAMPUS_DISPLAY.get(campus, campus)
+    campus_details = CAMPUS_REGISTRY.get(campus, {})
+    emoji = str(campus_details.get("emoji", ""))
+    display = str(campus_details.get("display_name", campus))
     trend_type = script.get("trend_type", "").replace("_", " ").title()
 
     header = f"{emoji} {display} | {trend_type}"
@@ -112,7 +117,10 @@ def _format_message(script: Dict[str, Any]) -> str:
 def _send_or_log(text: str, dry: bool) -> bool:
     """Send a message via Telegram Bot API, or just log it in dry mode."""
 
+    label = _message_label(text)
+
     if dry:
+        logger.info("Telegram message ready [dry-run]: %s", label)
         logger.info("[DRY RUN] Would send:\n%s", text)
         return True
 
@@ -127,23 +135,39 @@ def _send_or_log(text: str, dry: bool) -> bool:
             timeout=15,
         )
     except requests.RequestException as exc:
-        logger.error("Telegram send failed: %s", exc)
+        logger.error("Telegram send failed for %s: %s", label, exc)
+        return False
+
+    if response.status_code == 429:
+        retry_after = response.headers.get("Retry-After", "unknown")
+        logger.error("Telegram rate limited for %s (retry-after=%s).", label, retry_after)
         return False
 
     if response.status_code != 200:
         logger.error(
-            "Telegram returned %d: %s",
+            "Telegram returned %d for %s: %s",
             response.status_code,
+            label,
             response.text[:200],
         )
         return False
 
+    logger.info("Telegram message sent: %s", label)
     return True
 
 
-def _rate_limit(msg_count: int) -> None:
-    """Sleep if needed to stay under Telegram's 20 msgs/minute limit."""
+def _message_label(text: str) -> str:
+    """Return a short label for logs based on the first content line."""
 
-    if msg_count > 0 and msg_count % _MAX_MSGS_PER_MINUTE == 0:
-        logger.info("Rate limit pause (sent %d messages)", msg_count)
-        time.sleep(_MSG_INTERVAL)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return "empty message"
+    return lines[0][:80]
+
+
+def _rate_limit(*, dry: bool) -> None:
+    """Sleep between sends to stay under Telegram's 20 msgs/minute limit."""
+
+    if dry:
+        return
+    time.sleep(_MSG_INTERVAL)

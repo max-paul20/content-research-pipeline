@@ -13,7 +13,8 @@ from urllib.parse import urlparse
 
 import requests
 
-from pipeline.config import RUN_INTERVAL_HOURS, SUPPORTED_CAMPUSES, _PLACEHOLDER_VALUES
+from pipeline.config import RUN_INTERVAL_HOURS, _PLACEHOLDER_VALUES
+from pipeline.knowledge_base import CAMPUS_REGISTRY, SUPPORTED_CAMPUSES
 
 HASHTAG_SEEDS: Dict[str, Any] = {
     "beauty": [
@@ -43,8 +44,8 @@ HASHTAG_SEEDS: Dict[str, Any] = {
         "campuslife",
     ],
     "campus_specific": {
-        "uofa": ["uofa", "beardown", "wildcats", "uarizona", "universityofarizona", "tucsonaz"],
-        "calpoly": ["calpoly", "calpolyslo", "slo", "sanluisobispo", "mustangs"],
+        campus: list(details["hashtags"])
+        for campus, details in CAMPUS_REGISTRY.items()
     },
     "trending_formats": [
         "grwm",

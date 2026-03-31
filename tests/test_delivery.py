@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
+from pipeline.script_generator import generate_scripts
 from pipeline.delivery import (
     _format_message,
     deliver_scripts,
@@ -17,9 +18,50 @@ def _make_script(campus="uofa", trend_type="audio_driven"):
     return {
         "campus": campus,
         "trend_type": trend_type,
-        "brief": "HOOK: POV beauty hack\nKEY BEATS: show product\nDIALOGUE: so good",
+        "brief": (
+            "\U0001f3ac HOOK: POV beauty hack\n"
+            "\U0001f4dd KEY BEATS:\n"
+            "- show product\n"
+            "\U0001f5e3\ufe0f SUGGESTED DIALOGUE:\n"
+            "\"so good\"\n"
+            "\U0001f3b5 AUDIO: trending sound\n"
+            "#\ufe0f\u20e3 HASHTAGS: #beauty #uofa #unigliss #grwm #campusglam\n"
+            "\U0001f4cd CAMPUS TIE-IN: Old Main"
+        ),
         "source_url": "https://tiktok.com/@test/video/123",
         "generated_at": "2026-03-31T12:00:00Z",
+    }
+
+
+def _make_analyzed_post(post_id="p1", campus="uofa"):
+    """Build a minimal analyzed post for generator-to-delivery contract tests."""
+
+    return {
+        "post_id": post_id,
+        "platform": "tiktok",
+        "author": "testuser",
+        "author_followers": 5000,
+        "caption": f"caption for {post_id}",
+        "hashtags": ["beauty", "grwm"],
+        "views": 50000,
+        "likes": 5000,
+        "comments": 200,
+        "shares": 100,
+        "saves": 300,
+        "url": f"https://tiktok.com/@testuser/video/{post_id}",
+        "audio_name": "trending sound",
+        "audio_author": "artist",
+        "posted_at": "2026-03-30T12:00:00Z",
+        "scraped_at": "2026-03-31T00:00:00Z",
+        "raw_data": {},
+        "virality_score": 85,
+        "engagement_velocity": "high",
+        "trend_type": "audio_driven",
+        "virality_reason": "test reason",
+        "audio_lifecycle": "rising",
+        "relevance_score": 90,
+        "recommended_campus": campus,
+        "composite_score": 76.5,
     }
 
 
@@ -105,6 +147,26 @@ class DeliveryOrderTests(unittest.TestCase):
 
         call_texts = [c[0][0] for c in mock_send.call_args_list]
         self.assertIn("---", call_texts)
+
+
+class ContractTests(unittest.TestCase):
+    """Verify script generator output works with delivery formatting."""
+
+    def test_script_generator_output_formats_for_delivery(self) -> None:
+        scripts = generate_scripts(
+            [_make_analyzed_post(post_id="generated_1", campus="uofa")],
+            test_mode=True,
+            target_campus="uofa",
+        )
+
+        self.assertTrue(scripts)
+        message = _format_message(scripts[0])
+        result = deliver_scripts(scripts, test_mode=True)
+
+        self.assertIn("Arizona", message)
+        self.assertIn("SUGGESTED DIALOGUE", message)
+        self.assertIn("Source: https://tiktok.com/@testuser/video/generated_1", message)
+        self.assertEqual(result, {"sent": 1, "failed": 0})
 
 
 class DryRunTests(unittest.TestCase):

@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
+from pipeline.analyzer import _mock_analyze
 from pipeline.script_generator import (
     _build_user_prompt,
     _extract_brief,
@@ -43,6 +44,30 @@ def _make_analyzed_post(post_id, campus="both", score=80, trend_type="audio_driv
         "relevance_score": 90,
         "recommended_campus": campus,
         "composite_score": score,
+    }
+
+
+def _make_raw_post(post_id, views=50000, likes=5000):
+    """Build a minimal raw post dict for analyzer-to-generator contract tests."""
+
+    return {
+        "post_id": post_id,
+        "platform": "tiktok",
+        "author": "testuser",
+        "author_followers": 5000,
+        "caption": f"raw post caption for {post_id}",
+        "hashtags": ["beauty", "grwm"],
+        "views": views,
+        "likes": likes,
+        "comments": 200,
+        "shares": 100,
+        "saves": 300,
+        "url": f"https://tiktok.com/@testuser/video/{post_id}",
+        "audio_name": "trending sound",
+        "audio_author": "artist",
+        "posted_at": "2026-03-30T12:00:00Z",
+        "scraped_at": "2026-03-31T00:00:00Z",
+        "raw_data": {},
     }
 
 
@@ -107,6 +132,18 @@ class TestModeTests(unittest.TestCase):
         if cp_scripts:
             self.assertIn("Unigliss", cp_scripts[0]["brief"])
 
+    def test_target_campus_only_generates_requested_bucket(self) -> None:
+        posts = [
+            _make_analyzed_post("p1", campus="both", score=90),
+            _make_analyzed_post("p2", campus="calpoly", score=80),
+        ]
+
+        result = generate_scripts(posts, test_mode=True, target_campus="uofa")
+
+        self.assertTrue(result)
+        self.assertTrue(all(script["campus"] == "uofa" for script in result))
+        self.assertTrue(all("#cal poly" not in script["brief"].lower() for script in result))
+
 
 class CampusSplitTests(unittest.TestCase):
     """Verify campus splitting logic."""
@@ -152,6 +189,30 @@ class UserPromptTests(unittest.TestCase):
         self.assertIn("trending sound", prompt)
         self.assertIn("Virality Score: 85", prompt)
         self.assertIn("audio_driven", prompt)
+
+
+class ContractTests(unittest.TestCase):
+    """Verify schema compatibility between pipeline stages."""
+
+    def test_analyzer_output_feeds_script_generator(self) -> None:
+        with patch("pipeline.analyzer.config") as mock_config:
+            mock_config.ANALYZER_MIN_SCORE = 0
+            mock_config.ANALYZER_TOP_N = 15
+            analyzed = _mock_analyze(
+                [
+                    _make_raw_post("raw_1", views=80000, likes=9000),
+                    _make_raw_post("raw_2", views=72000, likes=8500),
+                ]
+            )
+
+        scripts = generate_scripts(analyzed, test_mode=True)
+
+        self.assertTrue(scripts)
+        for script in scripts:
+            self.assertIn("campus", script)
+            self.assertIn("brief", script)
+            self.assertIn("source_url", script)
+            self.assertIn("generated_at", script)
 
 
 class ExtractBriefTests(unittest.TestCase):
@@ -242,6 +303,50 @@ class ApiIntegrationTests(unittest.TestCase):
             result = generate_scripts(posts)
 
         self.assertEqual(result, [])
+
+    @patch("pipeline.script_generator.requests.post")
+    def test_non_200_status_skips_script(self, mock_post) -> None:
+        mock_response = MagicMock()
+        mock_response.status_code = 503
+        mock_response.text = "Service unavailable"
+        mock_post.return_value = mock_response
+
+        posts = [_make_analyzed_post("p1", campus="uofa")]
+
+        with patch("pipeline.script_generator.config") as mock_config:
+            mock_config.is_test_mode.return_value = False
+            mock_config._is_placeholder.return_value = False
+            mock_config.ANTHROPIC_API_KEY = "sk-ant-test"
+            mock_config.ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+            mock_config.ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+            mock_config.SCRIPTS_PER_CAMPUS = 3
+
+            result = generate_scripts(posts)
+
+        self.assertEqual(result, [])
+
+    @patch("pipeline.script_generator.requests.post")
+    def test_target_campus_prevents_off_target_calls(self, mock_post) -> None:
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = _anthropic_response("Mock brief")
+        mock_post.return_value = mock_response
+
+        posts = [_make_analyzed_post("p1", campus="both", score=90)]
+
+        with patch("pipeline.script_generator.config") as mock_config:
+            mock_config.is_test_mode.return_value = False
+            mock_config._is_placeholder.return_value = False
+            mock_config.ANTHROPIC_API_KEY = "sk-ant-test"
+            mock_config.ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+            mock_config.ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+            mock_config.SCRIPTS_PER_CAMPUS = 3
+
+            result = generate_scripts(posts, target_campus="uofa")
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["campus"], "uofa")
+        self.assertEqual(mock_post.call_count, 1)
 
     def test_placeholder_key_skips(self) -> None:
         posts = [_make_analyzed_post("p1")]

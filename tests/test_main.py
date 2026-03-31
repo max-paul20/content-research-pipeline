@@ -1,6 +1,8 @@
 """Unit tests for the pipeline orchestrator."""
 
 import json
+import subprocess
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -148,6 +150,7 @@ class PipelineWiringTests(unittest.TestCase):
         gen_call_posts = mock_gen.call_args[0][0]
         for p in gen_call_posts:
             self.assertIn(p.get("recommended_campus"), ("uofa", "both"))
+        self.assertEqual(mock_gen.call_args.kwargs["target_campus"], "uofa")
 
     @patch("pipeline.main.scrape_tiktok")
     @patch("pipeline.main.scrape_instagram")
@@ -163,6 +166,26 @@ class PipelineWiringTests(unittest.TestCase):
         with patch("pipeline.main._save_cache"):
             # Should not raise
             run_pipeline(dry_run=True)
+
+
+class CliSmokeTests(unittest.TestCase):
+    """Verify the CLI entry points execute successfully in dry-run mode."""
+
+    def test_root_main_dry_run_exits_zero(self) -> None:
+        repo_root = Path(__file__).resolve().parents[1]
+        result = subprocess.run(
+            [sys.executable, "main.py", "--dry-run"],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        self.assertEqual(
+            result.returncode,
+            0,
+            msg=f"stdout:\n{result.stdout}\n\nstderr:\n{result.stderr}",
+        )
 
 
 if __name__ == "__main__":

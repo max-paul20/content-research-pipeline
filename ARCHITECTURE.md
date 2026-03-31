@@ -5,20 +5,20 @@
 The pipeline uses two AI tiers to balance cost and quality:
 
 **Tier 1 — Gemini Flash-Lite (free)**
-- High-volume preprocessing: ~40-70 API calls per run
-- Batches 3-5 posts per call for efficiency
+- High-volume preprocessing: up to 26 API calls per run
+- Batches 5 posts per call for efficiency
 - Returns structured JSON: virality score, trend classification, audio lifecycle, campus relevance
-- Filters ~200 scraped posts down to 10-15 top candidates
+- Filters up to 130 scraped posts down to 10-15 top candidates
 - Budget: 500 calls/run cap, well within 1,000/day free limit across 2 runs
 
 **Tier 2 — Claude Sonnet (paid)**
 - Low-volume creative generation: ~6 API calls per run
 - Receives Gemini's top candidates + campus context from knowledge base
 - Generates lean creative briefs (100-200 words) with Gen Z tone
-- 3 scripts per campus = 6 total per run
+- Up to 3 scripts per campus = up to 6 total per run
 - Cost: ~$0.40-0.60/day ≈ $12-18/month
 
-**Why two tiers?** Gemini is free but less creative. Sonnet is excellent at tone and format but costs money. By using Gemini to filter 200 posts down to 6, we minimize Sonnet calls while maximizing creative quality.
+**Why two tiers?** Gemini is free but less creative. Sonnet is excellent at tone and format but costs money. By using Gemini to filter up to 130 posts down to up to 6, we minimize Sonnet calls while maximizing creative quality.
 
 ## Data Flow
 
@@ -32,7 +32,7 @@ The pipeline uses two AI tiers to balance cost and quality:
                 │
         ┌───────▼───────┐
         │ Raw Post Dicts│  17-field STANDARD_POST_KEYS schema
-        │ (~200 posts)  │  {post_id, platform, caption, views, ...}
+        │ (≤130 posts)  │  {post_id, platform, caption, views, ...}
         └───────┬───────┘
                 │
         ┌───────▼───────┐
@@ -54,7 +54,7 @@ The pipeline uses two AI tiers to balance cost and quality:
                 │
         ┌───────▼───────┐
         │  Script Dicts │  {campus, trend_type, brief, source_url, generated_at}
-        │  (6 scripts)  │  3 Arizona + 3 Cal Poly
+        │ (≤6 scripts)  │  Up to 3 Arizona + up to 3 Cal Poly
         └───────┬───────┘
                 │
         ┌───────▼───────┐
@@ -65,11 +65,11 @@ The pipeline uses two AI tiers to balance cost and quality:
 
 ## Campus Configuration
 
-Campus context lives in `pipeline/knowledge_base.py` → `CAMPUS_CONTEXT` dict. Adding a new campus requires:
+Campus configuration lives in `pipeline/knowledge_base.py` → `CAMPUS_REGISTRY`. Adding a new campus requires:
 
-1. Add a new entry to `CAMPUS_CONTEXT` with `Campus`, `Local Signals`, and `Content Hooks`
-2. Add the campus key to `SUPPORTED_CAMPUSES` tuple
-3. Add campus-specific hashtags to `scrapers/_common.py` → `HASHTAG_SEEDS["campus_specific"]`
+1. Add a new entry to `CAMPUS_REGISTRY` with `display_name`, `emoji`, `hashtags`, and `context`
+2. The `SUPPORTED_CAMPUSES` tuple and scraper hashtag seeds derive automatically from that registry
+3. Review any campus-specific tests or mock content for new local references
 
 This data should be reviewed and updated regularly. The more specific and current the campus context, the better the scripts.
 
@@ -86,9 +86,9 @@ Arizona (MST) and Cal Poly (PST) are 1 hour apart, so both windows work well for
 
 | Component | Calls/Run | Runs/Day | Daily Calls | Cost |
 |-----------|-----------|----------|-------------|------|
-| Gemini Flash-Lite | 40-70 | 2 | 80-140 | Free |
+| Gemini Flash-Lite | 26 max | 2 | 52 max | Free |
 | Claude Sonnet | 6 | 2 | 12 | ~$0.40-0.60 |
-| RapidAPI/Scraptik | ~30 | 2 | ~60 | Free tier |
+| RapidAPI/Scraptik | 20 max | 2 | 40 max | Free tier |
 | **Monthly total** | | | | **~$12-18** |
 
 ## What's NOT in v1

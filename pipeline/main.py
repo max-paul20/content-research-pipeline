@@ -49,10 +49,13 @@ def run_pipeline(
         logger.error("Configuration errors: %s", failures)
         sys.exit(1)
 
+    target_campus = _normalize_campus(campus) if campus else None
+    post_source_label = "loaded from cache" if skip_scrape else "scraped"
+
     # Scrape or load cache
     if skip_scrape:
         posts = _load_cache()
-        logger.info("Loaded %d cached posts.", len(posts))
+        logger.info("Loaded %d posts from cache.", len(posts))
     else:
         tiktok_posts = scrape_tiktok(test_mode=dry_run)
         instagram_posts = scrape_instagram(test_mode=dry_run)
@@ -74,30 +77,31 @@ def run_pipeline(
         return
 
     # Filter by campus if specified
-    if campus:
-        campus_key = _normalize_campus(campus)
-        if campus_key:
-            analyzed = [
-                p for p in analyzed
-                if p.get("recommended_campus") in (campus_key, "both")
-            ]
-            logger.info("Filtered to %d posts for campus '%s'.", len(analyzed), campus_key)
+    if target_campus:
+        analyzed = [
+            p for p in analyzed
+            if p.get("recommended_campus") in (target_campus, "both")
+        ]
+        logger.info("Filtered to %d posts for campus '%s'.", len(analyzed), target_campus)
 
     # Generate scripts
-    scripts = generate_scripts(analyzed, test_mode=dry_run)
+    scripts = generate_scripts(
+        analyzed,
+        test_mode=dry_run,
+        target_campus=target_campus,
+    )
     logger.info("Generated %d scripts.", len(scripts))
 
     # Filter scripts by campus if specified
-    if campus:
-        campus_key = _normalize_campus(campus)
-        if campus_key:
-            scripts = [s for s in scripts if s.get("campus") == campus_key]
+    if target_campus:
+        scripts = [s for s in scripts if s.get("campus") == target_campus]
 
     # Deliver
     result = deliver_scripts(scripts, test_mode=dry_run)
     logger.info(
-        "Pipeline complete: %d scraped, %d analyzed, %d scripts, %d delivered, %d failed.",
+        "Pipeline complete: %d %s, %d analyzed, %d scripts, %d delivered, %d failed.",
         len(posts),
+        post_source_label,
         len(analyzed),
         len(scripts),
         result["sent"],
