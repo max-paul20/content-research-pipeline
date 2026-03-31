@@ -25,6 +25,7 @@ load_dotenv(ENV_FILE, override=False)
 _PLACEHOLDER_VALUES = {
     "",
     "your-key-here",
+    "your-anthropic-key",
     "replace_me",
     "replace-me",
     "your-token-here",
@@ -39,8 +40,8 @@ _REQUIRED_API_KEYS = (
     "GEMINI_API_KEY",
     "RAPIDAPI_KEY",
     "TELEGRAM_BOT_TOKEN",
-    "TELEGRAM_REVIEW_CHANNEL_ID",
-    "TELEGRAM_CREATOR_CHANNEL_ID",
+    "TELEGRAM_CHANNEL_ID",
+    "ANTHROPIC_API_KEY",
 )
 
 
@@ -107,8 +108,12 @@ def _ensure_directory(path: Path) -> str:
 GEMINI_API_KEY = _get_env_str("GEMINI_API_KEY")
 RAPIDAPI_KEY = _get_env_str("RAPIDAPI_KEY")
 TELEGRAM_BOT_TOKEN = _get_env_str("TELEGRAM_BOT_TOKEN")
-TELEGRAM_REVIEW_CHANNEL_ID = _get_env_str("TELEGRAM_REVIEW_CHANNEL_ID")
-TELEGRAM_CREATOR_CHANNEL_ID = _get_env_str("TELEGRAM_CREATOR_CHANNEL_ID")
+TELEGRAM_CHANNEL_ID = _get_env_str("TELEGRAM_CHANNEL_ID")
+ANTHROPIC_API_KEY = _get_env_str("ANTHROPIC_API_KEY")
+ANTHROPIC_MODEL = _get_env_str("ANTHROPIC_MODEL", "claude-sonnet-4-20250514")
+ANTHROPIC_API_URL = _get_env_str(
+    "ANTHROPIC_API_URL", "https://api.anthropic.com/v1/messages"
+)
 
 RAPIDAPI_BASE_URL = _get_env_str("RAPIDAPI_BASE_URL", "https://scraptik.p.rapidapi.com")
 TIKTOK_ENDPOINTS: Dict[str, str] = {
@@ -128,9 +133,11 @@ GEMINI_API_ENDPOINT = _get_env_str(
     "GEMINI_API_ENDPOINT",
     f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent",
 )
-MAX_GEMINI_CALLS_PER_RUN = _get_env_int("MAX_GEMINI_CALLS_PER_RUN", 20)
-GEMINI_SCRIPT_TEMPERATURE = _get_env_float("GEMINI_SCRIPT_TEMPERATURE", 0.7)
+MAX_GEMINI_CALLS_PER_RUN = _get_env_int("MAX_GEMINI_CALLS_PER_RUN", 500)
 GEMINI_ANALYSIS_TEMPERATURE = _get_env_float("GEMINI_ANALYSIS_TEMPERATURE", 0.3)
+SCRIPTS_PER_CAMPUS = _get_env_int("SCRIPTS_PER_CAMPUS", 3)
+ANALYZER_TOP_N = _get_env_int("ANALYZER_TOP_N", 15)
+ANALYZER_MIN_SCORE = _get_env_int("ANALYZER_MIN_SCORE", 50)
 
 RUN_INTERVAL_HOURS = 6
 DEFAULT_CAMPUS = None
@@ -178,6 +185,11 @@ def validate_config() -> Dict[str, str]:
 
 
 __all__ = [
+    "ANALYZER_MIN_SCORE",
+    "ANALYZER_TOP_N",
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_API_URL",
+    "ANTHROPIC_MODEL",
     "DEFAULT_CAMPUS",
     "DATA_DIR",
     "DRY_RUN",
@@ -186,7 +198,6 @@ __all__ = [
     "GEMINI_API_ENDPOINT",
     "GEMINI_API_KEY",
     "GEMINI_MODEL",
-    "GEMINI_SCRIPT_TEMPERATURE",
     "INSTAGRAM_ENDPOINTS",
     "LOG_DIR",
     "MAX_GEMINI_CALLS_PER_RUN",
@@ -194,12 +205,12 @@ __all__ = [
     "RAPIDAPI_BASE_URL",
     "RAPIDAPI_KEY",
     "RUN_INTERVAL_HOURS",
+    "SCRIPTS_PER_CAMPUS",
     "SCRAPE_LIMIT",
     "SEEN_POSTS_FILE",
     "SUPPORTED_CAMPUSES",
     "TELEGRAM_BOT_TOKEN",
-    "TELEGRAM_CREATOR_CHANNEL_ID",
-    "TELEGRAM_REVIEW_CHANNEL_ID",
+    "TELEGRAM_CHANNEL_ID",
     "TEST_MODE",
     "TIKTOK_ENDPOINTS",
     "VIRALITY_THRESHOLD",

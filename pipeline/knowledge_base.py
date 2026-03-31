@@ -1,18 +1,19 @@
 """Structured prompt knowledge for the Unigliss Trend Radar.
 
 This module centralizes the 2026 platform intelligence and Unigliss strategy
-that should be injected into every model call. The helpers return provider-
-neutral system prompt strings so the same knowledge can be reused with Gemini,
-Ollama, or any future LLM integration.
+that should be injected into every model call. Two public prompt builders
+target the two-tier architecture:
+
+- ``get_gemini_analysis_prompt()`` — Tier 1 preprocessing (Gemini Flash-Lite)
+- ``get_sonnet_script_prompt(campus)`` — Tier 2 creative generation (Claude Sonnet)
 """
 
 from __future__ import annotations
 
 from textwrap import dedent
-from typing import Dict, Iterable, Optional, Sequence
+from typing import Dict, Iterable, Sequence
 
 SUPPORTED_CAMPUSES = ("uofa", "calpoly")
-SUPPORTED_OUTPUT_MODES = ("brief", "telegram")
 
 IDENTITY_BLOCK = dedent(
     """
@@ -118,145 +119,112 @@ CAMPUS_CONTEXT: Dict[str, Dict[str, Sequence[str]]] = {
     },
 }
 
-ANALYZER_OUTPUT_INSTRUCTIONS = dedent(
+GEMINI_ANALYSIS_INSTRUCTIONS = dedent(
     """
-    Analyze the supplied content or metrics and explain why it is spreading.
-    Use evidence first. If an input omits a datapoint, state the assumption
-    instead of inventing certainty.
+    You are a social media trend analyst. Analyze the batch of posts below
+    and return a JSON array with one object per post. Each object MUST use
+    exactly this schema (no extra keys, no markdown, no commentary):
 
-    Return concise markdown using exactly these headings:
-    ## Platform Diagnosis
-    ## Primary Viral Drivers
-    ## Transferable Tactics
-    ## Unigliss Adaptation
-    ## Watchouts
+    {
+      "post_id": "<the post_id from the input>",
+      "virality_score": <int 0-100>,
+      "engagement_velocity": "<low | medium | high>",
+      "trend_type": "<macro_beauty | campus_specific | audio_driven | format_driven>",
+      "virality_reason": "<1-2 sentence explanation>",
+      "audio_lifecycle": "<emerging | rising | peak | saturated | no_audio>",
+      "relevance_score": <int 0-100>,
+      "recommended_campus": "<uofa | calpoly | both>"
+    }
 
-    In the adaptation section, recommend how Unigliss can borrow the winning
-    mechanics without sounding like an ad, and tie the idea to the provided
-    campus context when relevant.
-    """
-).strip()
+    Scoring guidelines:
+    - virality_score: weight shares (35-40%), saves (25%), comments (15-20%),
+      completion signals (15-20%), likes (5%). Normalize to 0-100.
+    - engagement_velocity: compare engagement to view count and post age.
+      "high" = rapid growth relative to followers.
+    - relevance_score: how well the content fits the Unigliss beauty/campus
+      niche. 90+ = beauty + campus specific, 70-89 = beauty or campus,
+      50-69 = tangentially relevant, <50 = not relevant.
+    - recommended_campus: which campus audience would respond best, or "both".
 
-BRIEF_OUTPUT_INSTRUCTIONS = dedent(
-    """
-    Return one markdown creative brief.
-    The script must name the target campus explicitly.
-    Keep the structure tight and creator-ready using exactly these sections:
-    # Working Title
-    ## Trend Context
-    ## Hook (First 3 Seconds)
-    ## Beats
-    ## Unigliss Moment
-    ## Audio
-    ## Hashtags
-    ## Posting Time
-    ## Pro Tip
-
-    Requirements:
-    - Include 3-5 beats in the Beats section.
-    - Include exactly one natural Unigliss moment.
-    - Never place Unigliss in the first line or final line.
-    - Optimize for campus recognition and campus spread over generic mass virality.
-    - Make the script specific enough that a creator could film it without extra interpretation.
+    Return ONLY the JSON array. No markdown fences, no explanation.
     """
 ).strip()
 
-TELEGRAM_OUTPUT_INSTRUCTIONS = dedent(
+SONNET_SCRIPT_INSTRUCTIONS = dedent(
     """
-    Return one Telegram-ready creator script in compact markdown.
-    The script must name the target campus explicitly.
-    Keep it lean, scannable, and immediately filmable using these labels:
-    Title:
-    Campus:
-    Trend context:
-    Hook:
-    Beats:
-    Unigliss moment:
-    Audio:
-    Hashtags:
-    Posting time:
-    Pro tip:
+    You are a Gen Z content strategist for Unigliss, a peer-to-peer beauty
+    marketplace on college campuses. You talk like a college student — relatable,
+    funny, meme-aware, actually funny. You are NOT corporate. You are NOT cringe.
 
-    Requirements:
-    - Include 3-5 beats in a single compact numbered list.
-    - Include exactly one natural Unigliss moment.
-    - Never place Unigliss in the opening hook or the closing line.
-    - Optimize for campus recognition and campus spread over generic mass virality.
-    - Keep the response concise enough to send directly in Telegram without cleanup.
+    Your job: take a viral trend analysis and turn it into ONE lean creative
+    brief (100-200 words total) that a campus creator could film immediately.
+
+    ALWAYS mention booking through Unigliss naturally in the script — woven in,
+    not a hard sell. Good: "I found her on Unigliss btw" or "booked through
+    Unigliss obvi." Bad: "Download Unigliss now!" or any CTA.
+
+    Format your output using exactly these sections:
+    🎬 HOOK (first 1-3 seconds — what grabs attention)
+    📝 KEY BEATS (3-5 bullet scene directions / talking points)
+    🗣️ SUGGESTED DIALOGUE (1-3 lines the creator could say or riff on)
+    🎵 AUDIO (specific sound recommendation from the trend analysis)
+    #️⃣ HASHTAGS (5-8, mix of trending + campus + beauty niche)
+    📍 CAMPUS TIE-IN (specific location/event/cultural reference)
+
+    Keep it tight. No fluff. No corporate speak. Think "what would actually
+    go viral on this campus" not "what would a brand manager approve."
     """
 ).strip()
 
 
-def get_analyzer_prompt(campus: Optional[str] = None) -> str:
-    """Build the system prompt used to analyze why content is going viral.
+def get_gemini_analysis_prompt() -> str:
+    """Build the system prompt for Gemini Flash-Lite trend analysis (Tier 1).
+
+    Returns a prompt that instructs Gemini to return structured JSON scoring
+    each post on virality, engagement velocity, trend type, audio lifecycle,
+    and campus relevance.
+    """
+
+    sections = [
+        IDENTITY_BLOCK,
+        _render_knowledge_section("TikTok 2026 Algorithm Intelligence", TIKTOK_2026_KNOWLEDGE),
+        _render_knowledge_section(
+            "Instagram Reels 2026 Algorithm Intelligence",
+            INSTAGRAM_REELS_2026_KNOWLEDGE,
+        ),
+        _render_knowledge_section("Unigliss Strategy", UNIGLISS_STRATEGY),
+        _render_campus_section(SUPPORTED_CAMPUSES),
+        GEMINI_ANALYSIS_INSTRUCTIONS,
+    ]
+    return "\n\n".join(sections).strip()
+
+
+def get_sonnet_script_prompt(campus: str) -> str:
+    """Build the system prompt for Claude Sonnet script generation (Tier 2).
 
     Args:
-        campus: Optional campus key. Use ``"uofa"`` or ``"calpoly"`` to inject
-            only one campus context. If omitted, both launch campuses are
-            included.
+        campus: Required campus key — ``"uofa"`` or ``"calpoly"``.
 
     Returns:
-        A provider-neutral system prompt string for analysis tasks.
+        A system prompt with Gen Z tone, campus context, platform knowledge,
+        and the lean creative brief format specification.
 
     Raises:
         ValueError: If ``campus`` is not supported.
     """
 
-    selected_campuses = _select_campuses(campus)
+    validated = _validate_campus(campus)
     sections = [
-        IDENTITY_BLOCK,
+        SONNET_SCRIPT_INSTRUCTIONS,
         _render_knowledge_section("TikTok 2026 Algorithm Intelligence", TIKTOK_2026_KNOWLEDGE),
         _render_knowledge_section(
             "Instagram Reels 2026 Algorithm Intelligence",
             INSTAGRAM_REELS_2026_KNOWLEDGE,
         ),
         _render_knowledge_section("Unigliss Strategy", UNIGLISS_STRATEGY),
-        _render_campus_section(selected_campuses),
-        ANALYZER_OUTPUT_INSTRUCTIONS,
-    ]
-    return "\n\n".join(sections).strip()
-
-
-def get_script_generator_prompt(
-    campus: Optional[str] = None,
-    output_mode: str = "brief",
-) -> str:
-    """Build the system prompt used to generate creator-ready UGC scripts.
-
-    Args:
-        campus: Optional campus key. Use ``"uofa"`` or ``"calpoly"`` to inject
-            only one campus context. If omitted, both launch campuses are
-            included and the model must select one campus explicitly.
-        output_mode: Prompt format to enforce. Supported values are
-            ``"brief"`` and ``"telegram"``.
-
-    Returns:
-        A provider-neutral system prompt string for script generation tasks.
-
-    Raises:
-        ValueError: If ``campus`` or ``output_mode`` is not supported.
-    """
-
-    selected_campuses = _select_campuses(campus)
-    normalized_mode = _validate_output_mode(output_mode)
-    sections = [
-        IDENTITY_BLOCK,
-        dedent(
-            """
-            Your scripts should feel like they were shaped by a campus-native
-            creator strategist who understands platform mechanics, not by a
-            generic ad copywriter.
-            """
-        ).strip(),
-        _render_knowledge_section("TikTok 2026 Algorithm Intelligence", TIKTOK_2026_KNOWLEDGE),
-        _render_knowledge_section(
-            "Instagram Reels 2026 Algorithm Intelligence",
-            INSTAGRAM_REELS_2026_KNOWLEDGE,
-        ),
-        _render_knowledge_section("Unigliss Strategy", UNIGLISS_STRATEGY),
-        _render_campus_section(selected_campuses),
-        _script_mode_preamble(campus),
-        _output_instructions(normalized_mode),
+        _render_campus_section((validated,)),
+        "Use only this campus context. Every reference must feel specific to "
+        "this campus — generic college vibes are a fail.",
     ]
     return "\n\n".join(sections).strip()
 
@@ -278,17 +246,6 @@ def _validate_campus(campus: str) -> str:
         raise ValueError(f"Unsupported campus '{campus}'. Expected one of: {supported}.")
     return normalized
 
-
-def _validate_output_mode(output_mode: str) -> str:
-    """Validate the requested output mode and return its normalized form."""
-
-    normalized = output_mode.strip().lower()
-    if normalized not in SUPPORTED_OUTPUT_MODES:
-        supported = ", ".join(SUPPORTED_OUTPUT_MODES)
-        raise ValueError(
-            f"Unsupported output_mode '{output_mode}'. Expected one of: {supported}."
-        )
-    return normalized
 
 
 def _render_knowledge_section(title: str, knowledge: Dict[str, Sequence[str]]) -> str:
@@ -317,25 +274,6 @@ def _render_campus_section(campuses: Iterable[str]) -> str:
     return "\n".join(lines)
 
 
-def _script_mode_preamble(campus: Optional[str]) -> str:
-    """Explain how campus selection should behave for generation prompts."""
-
-    if campus is None:
-        return (
-            "Multiple campuses are available in context. Choose the single best campus "
-            "for the requested idea and name that campus explicitly in the output. "
-            "Do not blend U of A and Cal Poly into one script."
-        )
-    return "Use only the selected campus context and name that campus explicitly in the output."
-
-
-def _output_instructions(output_mode: str) -> str:
-    """Return the output-format instructions for the selected mode."""
-
-    if output_mode == "brief":
-        return BRIEF_OUTPUT_INSTRUCTIONS
-    return TELEGRAM_OUTPUT_INSTRUCTIONS
-
 
 def _bullets(items: Sequence[str]) -> Sequence[str]:
     """Render a sequence of strings as markdown bullet lines."""
@@ -345,11 +283,10 @@ def _bullets(items: Sequence[str]) -> Sequence[str]:
 
 __all__ = [
     "SUPPORTED_CAMPUSES",
-    "SUPPORTED_OUTPUT_MODES",
     "TIKTOK_2026_KNOWLEDGE",
     "INSTAGRAM_REELS_2026_KNOWLEDGE",
     "UNIGLISS_STRATEGY",
     "CAMPUS_CONTEXT",
-    "get_analyzer_prompt",
-    "get_script_generator_prompt",
+    "get_gemini_analysis_prompt",
+    "get_sonnet_script_prompt",
 ]

@@ -32,15 +32,21 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.GEMINI_MODEL, "gemini-2.5-flash-lite")
         self.assertEqual(config.SCRAPE_LIMIT, 20)
         self.assertAlmostEqual(config.VIRALITY_THRESHOLD, 0.7)
-        self.assertEqual(config.MAX_GEMINI_CALLS_PER_RUN, 20)
+        self.assertEqual(config.MAX_GEMINI_CALLS_PER_RUN, 500)
         self.assertAlmostEqual(config.GEMINI_ANALYSIS_TEMPERATURE, 0.3)
-        self.assertAlmostEqual(config.GEMINI_SCRIPT_TEMPERATURE, 0.7)
         self.assertEqual(config.RUN_INTERVAL_HOURS, 6)
         self.assertEqual(config.SUPPORTED_CAMPUSES, ("uofa", "calpoly"))
         self.assertIsNone(config.DEFAULT_CAMPUS)
         self.assertEqual(config.SEEN_POSTS_FILE, config.DATA_DIR / "seen_posts.json")
         self.assertFalse(config.DRY_RUN)
         self.assertFalse(config.TEST_MODE)
+        self.assertEqual(config.ANTHROPIC_MODEL, "claude-sonnet-4-20250514")
+        self.assertEqual(
+            config.ANTHROPIC_API_URL, "https://api.anthropic.com/v1/messages"
+        )
+        self.assertEqual(config.SCRIPTS_PER_CAMPUS, 3)
+        self.assertEqual(config.ANALYZER_TOP_N, 15)
+        self.assertEqual(config.ANALYZER_MIN_SCORE, 50)
 
     def test_validate_config_catches_missing_and_placeholder_keys(self) -> None:
         config = reload_config(
@@ -48,8 +54,8 @@ class ConfigTests(unittest.TestCase):
                 "GEMINI_API_KEY": "your-key-here",
                 "RAPIDAPI_KEY": "REPLACE_ME",
                 "TELEGRAM_BOT_TOKEN": "",
-                "TELEGRAM_REVIEW_CHANNEL_ID": "",
-                "TELEGRAM_CREATOR_CHANNEL_ID": "",
+                "TELEGRAM_CHANNEL_ID": "",
+                "ANTHROPIC_API_KEY": "your-anthropic-key",
                 "TEST_MODE": "false",
             }
         )
@@ -64,14 +70,15 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(status["GEMINI_API_KEY"], "placeholder")
         self.assertEqual(status["RAPIDAPI_KEY"], "placeholder")
         self.assertEqual(status["TELEGRAM_BOT_TOKEN"], "missing")
-        self.assertEqual(status["TELEGRAM_REVIEW_CHANNEL_ID"], "missing")
-        self.assertEqual(status["TELEGRAM_CREATOR_CHANNEL_ID"], "missing")
+        self.assertEqual(status["TELEGRAM_CHANNEL_ID"], "missing")
+        self.assertEqual(status["ANTHROPIC_API_KEY"], "placeholder")
 
     def test_all_placeholder_patterns_are_caught(self) -> None:
         """Every entry in _PLACEHOLDER_VALUES must resolve to 'placeholder' status."""
 
         placeholder_values = [
             "your-key-here",
+            "your-anthropic-key",
             "replace_me",
             "replace-me",
             "your-token-here",
@@ -98,8 +105,8 @@ class ConfigTests(unittest.TestCase):
                         "GEMINI_API_KEY": placeholder,
                         "RAPIDAPI_KEY": "real-key",
                         "TELEGRAM_BOT_TOKEN": "real-token",
-                        "TELEGRAM_REVIEW_CHANNEL_ID": "-100123",
-                        "TELEGRAM_CREATOR_CHANNEL_ID": "-100456",
+                        "TELEGRAM_CHANNEL_ID": "-100123",
+                        "ANTHROPIC_API_KEY": "real-anthropic-key",
                         "TEST_MODE": "false",
                     }
                 )
@@ -123,8 +130,8 @@ class ConfigTests(unittest.TestCase):
                 "GEMINI_API_KEY": "   ",
                 "RAPIDAPI_KEY": "real-key",
                 "TELEGRAM_BOT_TOKEN": "real-token",
-                "TELEGRAM_REVIEW_CHANNEL_ID": "-100123",
-                "TELEGRAM_CREATOR_CHANNEL_ID": "-100456",
+                "TELEGRAM_CHANNEL_ID": "-100123",
+                "ANTHROPIC_API_KEY": "real-anthropic-key",
                 "TEST_MODE": "false",
             }
         )
@@ -142,8 +149,8 @@ class ConfigTests(unittest.TestCase):
                 "GEMINI_API_KEY": "gemini-real-key",
                 "RAPIDAPI_KEY": "rapidapi-real-key",
                 "TELEGRAM_BOT_TOKEN": "telegram-real-token",
-                "TELEGRAM_REVIEW_CHANNEL_ID": "-1001111111111",
-                "TELEGRAM_CREATOR_CHANNEL_ID": "-1002222222222",
+                "TELEGRAM_CHANNEL_ID": "-1001111111111",
+                "ANTHROPIC_API_KEY": "sk-ant-real-key",
             }
         )
 
@@ -157,8 +164,8 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(status["GEMINI_API_KEY"], "ok")
         self.assertEqual(status["RAPIDAPI_KEY"], "ok")
         self.assertEqual(status["TELEGRAM_BOT_TOKEN"], "ok")
-        self.assertEqual(status["TELEGRAM_REVIEW_CHANNEL_ID"], "ok")
-        self.assertEqual(status["TELEGRAM_CREATOR_CHANNEL_ID"], "ok")
+        self.assertEqual(status["TELEGRAM_CHANNEL_ID"], "ok")
+        self.assertEqual(status["ANTHROPIC_API_KEY"], "ok")
 
     def test_validate_config_creates_directories(self) -> None:
         config = reload_config({"TEST_MODE": "true"})
@@ -224,16 +231,20 @@ class ConfigTests(unittest.TestCase):
                 "SCRAPE_LIMIT": "not-a-number",
                 "VIRALITY_THRESHOLD": "abc",
                 "MAX_GEMINI_CALLS_PER_RUN": "!!",
-                "GEMINI_SCRIPT_TEMPERATURE": "hot",
                 "GEMINI_ANALYSIS_TEMPERATURE": "cold",
+                "SCRIPTS_PER_CAMPUS": "many",
+                "ANALYZER_TOP_N": "lots",
+                "ANALYZER_MIN_SCORE": "high",
             }
         )
 
         self.assertEqual(config.SCRAPE_LIMIT, 20)
         self.assertAlmostEqual(config.VIRALITY_THRESHOLD, 0.7)
-        self.assertEqual(config.MAX_GEMINI_CALLS_PER_RUN, 20)
-        self.assertAlmostEqual(config.GEMINI_SCRIPT_TEMPERATURE, 0.7)
+        self.assertEqual(config.MAX_GEMINI_CALLS_PER_RUN, 500)
         self.assertAlmostEqual(config.GEMINI_ANALYSIS_TEMPERATURE, 0.3)
+        self.assertEqual(config.SCRIPTS_PER_CAMPUS, 3)
+        self.assertEqual(config.ANALYZER_TOP_N, 15)
+        self.assertEqual(config.ANALYZER_MIN_SCORE, 50)
 
 
 if __name__ == "__main__":

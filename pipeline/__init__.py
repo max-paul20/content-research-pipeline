@@ -2,14 +2,12 @@
 
 from .knowledge_base import (
     SUPPORTED_CAMPUSES,
-    SUPPORTED_OUTPUT_MODES,
-    get_analyzer_prompt,
-    get_script_generator_prompt,
+    get_gemini_analysis_prompt,
+    get_sonnet_script_prompt,
 )
 
 __all__ = [
     "SUPPORTED_CAMPUSES",
-    "SUPPORTED_OUTPUT_MODES",
-    "get_analyzer_prompt",
-    "get_script_generator_prompt",
+    "get_gemini_analysis_prompt",
+    "get_sonnet_script_prompt",
 ]
