@@ -3,6 +3,7 @@
 Content intelligence pipeline for [Unigliss](https://unigliss.com), a peer-to-peer beauty marketplace on college campuses. Scrapes viral beauty and lifestyle content from TikTok and Instagram, scores it with Gemini, generates campus-specific creator briefs with Claude Sonnet, and delivers them via Telegram.
 
 **Live campuses:** University of Arizona and Cal Poly SLO.
+**Verification status:** 155 tests passing as of 2026-04-02.
 
 ## Architecture
 
@@ -41,18 +42,22 @@ TELEGRAM (private channel)
 
 ## Module Status
 
-| Module | Status | Tests |
-|--------|--------|-------|
-| `pipeline/config.py` | Built | 10 |
-| `pipeline/knowledge_base.py` | Built | 11 |
-| `pipeline/scrapers/_common.py` | Built | 49 |
-| `pipeline/scrapers/tiktok.py` | Built | (in scrapers) |
-| `pipeline/scrapers/instagram.py` | Built | (in scrapers) |
-| `pipeline/analyzer.py` | Built | 23 |
-| `pipeline/script_generator.py` | Built | 19 |
-| `pipeline/delivery.py` | Built | 16 |
-| `pipeline/main.py` | Built | 11 |
-| **Total** | | **139** |
+| Module | Status | Coverage |
+|--------|--------|----------|
+| `pipeline/config.py` | Built + verified | `tests/test_config.py` (10) |
+| `pipeline/knowledge_base.py` | Built + verified | `tests/test_knowledge_base.py` (11) |
+| `pipeline/scrapers/_common.py` | Built + verified | `tests/test_scrapers.py` (49 shared scraper tests) |
+| `pipeline/scrapers/tiktok.py` | Built + verified | `tests/test_scrapers.py` |
+| `pipeline/scrapers/instagram.py` | Built + verified | `tests/test_scrapers.py` |
+| `pipeline/analyzer.py` | Built + verified | `tests/test_analyzer.py` (28) |
+| `pipeline/script_generator.py` | Built + verified | `tests/test_script_generator.py` (21) |
+| `pipeline/delivery.py` | Built + verified | `tests/test_delivery.py` (18) |
+| `pipeline/main.py` | Built + verified | `tests/test_main.py` (13) |
+| `pipeline/history.py` | Built + verified | `tests/test_history.py` (3) |
+| `pipeline/http_utils.py` | Built + verified | Shared retry coverage via analyzer/script generator/delivery tests |
+| `logging_utils.py` | Built + verified | `tests/test_logging_setup.py` (2) |
+
+Full suite: **155 tests**
 
 ## Setup
 
@@ -62,7 +67,7 @@ cd content-research-pipeline
 python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.template .env
-# Fill in API keys in .env
+# Replace the placeholder values in .env with real credentials
 python3 -m unittest discover -s tests -v  # Verify setup (155 tests)
 ```
 
@@ -109,12 +114,21 @@ Runtime logs:
 - `data/logs/pipeline.log` — rotating application log (5 MB, 3 backups)
 - `data/logs/cron.log` — stdout/stderr captured by `run.sh`
 
+## Operational Hardening
+
+- Cross-run dedup:
+  scraper-level seen-post cache in `data/seen_posts.json`
+  delivered-script history in `data/scripted_posts.json`
+- Script history is filtered before Gemini analysis and expires entries older than 7 days.
+- Logging writes to both console and `data/logs/pipeline.log` through `RotatingFileHandler`.
+- Gemini, Anthropic, and Telegram API calls use shared exponential-backoff retries, while `401` errors fail fast without retry.
+
 ## Cost
 
-- **Gemini Flash-Lite:** Free (up to 52 calls/day, well within 1,000 daily limit)
-- **RapidAPI / Scraptik:** Up to 40 requests/day across 2 runs
-- **Claude Sonnet:** ~$0.40-0.60/day (~12 calls/day at ~2K input + ~500 output tokens)
-- **Total:** ~$12-18/month
+- **Gemini Flash-Lite:** Free tier is available on the Gemini Developer API; at the repo's current ceilings this stage is still negligible even on paid token pricing.
+- **RapidAPI / Scraptik:** 20 requests/run, 40 requests/day at the default twice-daily schedule. Actual cost depends on the current Scraptik plan.
+- **Claude Sonnet 4:** At current Anthropic list pricing and the repo's current prompt sizes, roughly low single-digit dollars per month at the default ceiling (about 12 calls/day, up to 6 scripts/run).
+- **Total:** Model spend remains modest at the current defaults; the main variable cost outside Sonnet is whichever Scraptik plan is active.
 
 ## Development
 

@@ -5,62 +5,89 @@
 The pipeline uses two AI tiers to balance cost and quality:
 
 **Tier 1 — Gemini Flash-Lite (free)**
-- High-volume preprocessing: up to 26 API calls per run
+- High-volume preprocessing: up to 26 API calls per run at the current scrape ceiling
 - Batches 5 posts per call for efficiency
 - Returns structured JSON: virality score, trend classification, audio lifecycle, campus relevance
 - Filters up to 130 scraped posts down to 10-15 top candidates
-- Budget: 500 calls/run cap, well within 1,000/day free limit across 2 runs
+- Budget guardrail: `MAX_GEMINI_CALLS_PER_RUN=500`
 
 **Tier 2 — Claude Sonnet (paid)**
 - Low-volume creative generation: ~6 API calls per run
 - Receives Gemini's top candidates + campus context from knowledge base
 - Generates lean creative briefs (100-200 words) with Gen Z tone
 - Up to 3 scripts per campus = up to 6 total per run
-- Cost: ~$0.40-0.60/day ≈ $12-18/month
+- Cost remains modest at the current ceilings; see the updated cost section below
 
 **Why two tiers?** Gemini is free but less creative. Sonnet is excellent at tone and format but costs money. By using Gemini to filter up to 130 posts down to up to 6, we minimize Sonnet calls while maximizing creative quality.
+
+## Operational Hardening
+
+- Scraper-level dedup persists seen posts to `data/seen_posts.json`.
+- Delivered-script history persists to `data/scripted_posts.json`, is checked before analyzer runs, and expires entries older than 7 days.
+- Startup logging is dual-path: console plus rotating file logging at `data/logs/pipeline.log`.
+- Gemini, Anthropic, and Telegram use shared retry logic with exponential backoff and no retries on `401`.
+- `run.sh` activates the repo venv and captures stdout/stderr to `data/logs/cron.log` for cron-safe execution.
 
 ## Data Flow
 
 ```
-┌─────────────┐     ┌─────────────┐
-│ TikTok API  │     │Instagram API│
-│ (Scraptik)  │     │ (Scraptik)  │
-└──────┬──────┘     └──────┬──────┘
-       │                    │
-       └────────┬───────────┘
-                │
-        ┌───────▼───────┐
-        │ Raw Post Dicts│  17-field STANDARD_POST_KEYS schema
-        │ (≤130 posts)  │  {post_id, platform, caption, views, ...}
-        └───────┬───────┘
-                │
-        ┌───────▼───────┐
-        │   Analyzer    │  Gemini Flash-Lite
-        │ (Tier 1)      │  Adds: virality_score, composite_score,
-        │               │  trend_type, audio_lifecycle, recommended_campus
-        └───────┬───────┘
-                │
-        ┌───────▼───────┐
-        │  Enriched     │  Original 17 fields + 8 analysis fields
-        │ (10-15 posts) │  Filtered by ANALYZER_MIN_SCORE, sorted by composite_score
-        └───────┬───────┘
-                │
-        ┌───────▼───────┐
-        │Script Generator│  Claude Sonnet
-        │ (Tier 2)       │  Split by recommended_campus
-        │                │  Top SCRIPTS_PER_CAMPUS per bucket
-        └───────┬────────┘
-                │
-        ┌───────▼───────┐
-        │  Script Dicts │  {campus, trend_type, brief, source_url, generated_at}
-        │ (≤6 scripts)  │  Up to 3 Arizona + up to 3 Cal Poly
-        └───────┬───────┘
-                │
-        ┌───────▼───────┐
-        │   Delivery    │  Telegram Bot API
-        │               │  Arizona first → separator → Cal Poly
-        └───────────────┘
+┌──────────────┐
+│ CLI / Cron   │  `main.py`, `python -m pipeline.main`, or `run.sh`
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ Startup      │  `configure_logging()` + `config.validate_config()`
+│ Validation   │  load `data/scripted_posts.json`
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ Scrape Or    │  TikTok + Instagram, or `--skip-scrape` cache load
+│ Load Cache   │  cache writes to `data/cached_posts.json`
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ Scraper      │  endpoint failure isolation + seen-post dedup in
+│ Hardening    │  `data/seen_posts.json`
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ History      │  drop already-scripted posts before Gemini analysis
+│ Filter       │  using 7-day `scripted_posts.json` history
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ Analyzer     │  Gemini Flash-Lite
+│ (Tier 1)     │  batches of 5, JSON recovery, retry/backoff
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ Campus       │  optional `--campus arizona|calpoly`
+│ Filter       │  keeps `uofa`, `calpoly`, or `both`
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ Script       │  Claude Sonnet
+│ Generator    │  up to `SCRIPTS_PER_CAMPUS` per campus bucket
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ Delivery     │  Telegram, Arizona first, optional separator,
+│               │  Cal Poly second
+└──────┬───────┘
+       │
+       ▼
+┌──────────────┐
+│ Post-Run     │  on live sends only, persist delivered source posts
+│ History Save │  back to `data/scripted_posts.json`
+└──────────────┘
 ```
 
 ## Campus Configuration
@@ -86,10 +113,10 @@ Arizona (MST) and Cal Poly (PST) are 1 hour apart, so both windows work well for
 
 | Component | Calls/Run | Runs/Day | Daily Calls | Cost |
 |-----------|-----------|----------|-------------|------|
-| Gemini Flash-Lite | 26 max | 2 | 52 max | Free |
-| Claude Sonnet | 6 | 2 | 12 | ~$0.40-0.60 |
-| RapidAPI/Scraptik | 20 max | 2 | 40 max | Free tier |
-| **Monthly total** | | | | **~$12-18** |
+| Gemini Flash-Lite | 26 max | 2 | 52 max | Free tier available; paid token pricing is still negligible at this volume |
+| Claude Sonnet 4 | 6 max | 2 | 12 max | Roughly low single-digit dollars per month at current list pricing |
+| RapidAPI/Scraptik | 20 max | 2 | 40 max | Depends on the current Scraptik plan |
+| **Monthly total** | | | | **Low single-digit model spend, plus any Scraptik plan cost** |
 
 ## What's NOT in v1
 
