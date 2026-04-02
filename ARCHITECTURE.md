@@ -8,15 +8,15 @@ The pipeline uses two AI tiers to balance cost and quality:
 - High-volume preprocessing: up to 26 API calls per run at the current scrape ceiling
 - Batches 5 posts per call for efficiency
 - Returns structured JSON: virality score, trend classification, audio lifecycle, campus relevance
-- Filters up to 130 scraped posts down to 10-15 top candidates
+- Filters up to 130 scraped posts down to at most 15 ranked candidates
 - Budget guardrail: `MAX_GEMINI_CALLS_PER_RUN=500`
 
 **Tier 2 — Claude Sonnet (paid)**
-- Low-volume creative generation: ~6 API calls per run
+- Low-volume creative generation: up to 6 API calls per run
 - Receives Gemini's top candidates + campus context from knowledge base
 - Generates lean creative briefs (100-200 words) with Gen Z tone
 - Up to 3 scripts per campus = up to 6 total per run
-- Cost remains modest at the current ceilings; see the updated cost section below
+- Delivery volume is capped by `SCRIPTS_PER_CAMPUS=3`; see the usage section below
 
 **Why two tiers?** Gemini is free but less creative. Sonnet is excellent at tone and format but costs money. By using Gemini to filter up to 130 posts down to up to 6, we minimize Sonnet calls while maximizing creative quality.
 
@@ -109,14 +109,15 @@ Two daily runs, timed for peak posting windows across both campus timezones:
 
 Arizona (MST) and Cal Poly (PST) are 1 hour apart, so both windows work well for both campuses.
 
-## Cost Breakdown
+## Usage Ceilings
 
-| Component | Calls/Run | Runs/Day | Daily Calls | Cost |
-|-----------|-----------|----------|-------------|------|
-| Gemini Flash-Lite | 26 max | 2 | 52 max | Free tier available; paid token pricing is still negligible at this volume |
-| Claude Sonnet 4 | 6 max | 2 | 12 max | Roughly low single-digit dollars per month at current list pricing |
-| RapidAPI/Scraptik | 20 max | 2 | 40 max | Depends on the current Scraptik plan |
-| **Monthly total** | | | | **Low single-digit model spend, plus any Scraptik plan cost** |
+| Component | Calls/Run | Runs/Day | Daily Calls | Source |
+|-----------|-----------|----------|-------------|--------|
+| Gemini Flash-Lite | 26 max | 2 | 52 max | `SCRAPE_LIMIT=20`, 2 platforms, 9 hashtags/platform, batch size 5 |
+| Claude Sonnet 4 | 6 max | 2 | 12 max | `SCRIPTS_PER_CAMPUS=3`, 2 campuses |
+| RapidAPI/Scraptik | 20 max | 2 | 40 max | 10 scraper requests/platform/run, 2 platforms |
+
+Pricing is intentionally not hard-coded here because vendor pricing changes independently of the repo. The codebase fixes the usage ceilings above; actual spend depends on the current Gemini, Anthropic, and Scraptik pricing active at runtime.
 
 ## What's NOT in v1
 

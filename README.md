@@ -8,27 +8,36 @@ Content intelligence pipeline for [Unigliss](https://unigliss.com), a peer-to-pe
 ## Architecture
 
 ```
-CRON (12:00 PM + 7:00 PM MST)
-  │
+CLI / CRON
+  │  `main.py`, `python -m pipeline.main`, or `run.sh`
   ▼
-SCRAPERS (RapidAPI / Scraptik)
-  │  Up to 130 posts from TikTok + Instagram
-  │  Hashtag search + trending feed + campus-specific tags
-  │
+STARTUP
+  │  Configure logging, validate config, load 7-day scripted history
   ▼
-TIER 1: GEMINI FLASH-LITE (free, up to 26 API calls/run)
-  │  Batch 5 posts per call
-  │  Score virality, classify trend type, tag audio lifecycle
-  │  Filter and rank → top 10-15 candidates
-  │
+SCRAPE OR LOAD CACHE
+  │  Up to 130 posts/run at current defaults
+  │  TikTok + Instagram, or `--skip-scrape` from `data/cached_posts.json`
   ▼
-TIER 2: CLAUDE SONNET (paid, ~6 API calls/run)
-  │  Up to 3 scripts for Arizona + up to 3 scripts for Cal Poly
-  │  Lean creative briefs, 100-200 words each
-  │
+PRE-ANALYSIS FILTER
+  │  Drop posts already present in `data/scripted_posts.json`
   ▼
-TELEGRAM (private channel)
-  │  Briefs sent to owner for review
+TIER 1: GEMINI FLASH-LITE
+  │  Batch size = 5
+  │  Up to 26 analysis calls/run at current scrape ceiling
+  │  Rank and keep up to 15 candidates
+  ▼
+CAMPUS FILTER
+  │  Optional `--campus arizona|calpoly`
+  ▼
+TIER 2: CLAUDE SONNET
+  │  Up to 3 scripts/campus
+  │  Up to 6 generation calls/run
+  ▼
+TELEGRAM DELIVERY
+  │  Arizona first, separator when both campuses exist, then Cal Poly
+  ▼
+POST-RUN HISTORY SAVE
+  │  Live sends only; delivered source posts are written back to history
 ```
 
 ## Tech Stack
@@ -125,10 +134,10 @@ Runtime logs:
 
 ## Cost
 
-- **Gemini Flash-Lite:** Free tier is available on the Gemini Developer API; at the repo's current ceilings this stage is still negligible even on paid token pricing.
-- **RapidAPI / Scraptik:** 20 requests/run, 40 requests/day at the default twice-daily schedule. Actual cost depends on the current Scraptik plan.
-- **Claude Sonnet 4:** At current Anthropic list pricing and the repo's current prompt sizes, roughly low single-digit dollars per month at the default ceiling (about 12 calls/day, up to 6 scripts/run).
-- **Total:** Model spend remains modest at the current defaults; the main variable cost outside Sonnet is whichever Scraptik plan is active.
+- **Gemini Flash-Lite:** up to 26 calls/run and 52 calls/day at the default twice-daily schedule.
+- **RapidAPI / Scraptik:** 20 requests/run and 40 requests/day at the default twice-daily schedule.
+- **Claude Sonnet 4:** up to 6 calls/run and 12 calls/day at the default twice-daily schedule.
+- **Pricing note:** dollar cost is not fixed in the repo; it depends on the current Gemini, Anthropic, and Scraptik pricing active at runtime.
 
 ## Development
 
