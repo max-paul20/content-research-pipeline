@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Tuple
 import requests
 
 from . import config
+from .http_utils import request_with_retries
 from .knowledge_base import CAMPUS_REGISTRY, SUPPORTED_CAMPUSES, get_sonnet_script_prompt
 from .scrapers._common import utc_now_iso
 
@@ -104,8 +105,8 @@ def _generate_one(post: Dict[str, Any], campus: str) -> Dict[str, Any] | None:
     system_prompt = get_sonnet_script_prompt(campus)
     user_prompt = _build_user_prompt(post)
 
-    try:
-        response = requests.post(
+    response = request_with_retries(
+        lambda: requests.post(
             config.ANTHROPIC_API_URL,
             headers={
                 "x-api-key": config.ANTHROPIC_API_KEY,
@@ -119,17 +120,13 @@ def _generate_one(post: Dict[str, Any], campus: str) -> Dict[str, Any] | None:
                 "messages": [{"role": "user", "content": user_prompt}],
             },
             timeout=60,
-        )
-    except requests.RequestException as exc:
-        logger.error("Anthropic API request failed: %s", exc)
-        return None
+        ),
+        service="Anthropic",
+        operation=f"script generation for {campus}:{post.get('post_id', 'unknown')}",
+        logger=logger,
+    )
 
-    if response.status_code != 200:
-        logger.error(
-            "Anthropic API returned %d: %s",
-            response.status_code,
-            response.text[:200],
-        )
+    if response is None:
         return None
 
     brief = _extract_brief(response.text)
@@ -141,6 +138,8 @@ def _generate_one(post: Dict[str, Any], campus: str) -> Dict[str, Any] | None:
         "trend_type": post.get("trend_type", ""),
         "brief": brief,
         "source_url": post.get("url", ""),
+        "source_post_id": post.get("post_id", ""),
+        "source_platform": post.get("platform", ""),
         "generated_at": utc_now_iso(),
     }
 
@@ -223,6 +222,8 @@ def _mock_generate(
                         f"\U0001f4cd CAMPUS TIE-IN: {spot}"
                     ),
                     "source_url": post.get("url", ""),
+                    "source_post_id": post.get("post_id", ""),
+                    "source_platform": post.get("platform", ""),
                     "generated_at": utc_now_iso(),
                 }
             )

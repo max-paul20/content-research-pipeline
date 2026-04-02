@@ -13,6 +13,7 @@ from typing import Any, Dict, List
 import requests
 
 from . import config
+from .http_utils import request_with_retries
 from .knowledge_base import CAMPUS_REGISTRY
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,9 @@ _MSG_INTERVAL = max(3.5, 60.0 / _MAX_MSGS_PER_MINUTE)
 def deliver_scripts(
     scripts: List[Dict[str, Any]],
     test_mode: bool = False,
-) -> Dict[str, int]:
+    *,
+    include_details: bool = False,
+) -> Dict[str, Any]:
     """Send creative briefs to the Telegram private channel.
 
     Args:
@@ -34,24 +37,26 @@ def deliver_scripts(
         test_mode: If ``True``, log messages but don't send.
 
     Returns:
-        A dict with ``sent`` and ``failed`` counts.
+        A dict with ``sent`` and ``failed`` counts. When ``include_details`` is
+        ``True``, also includes a ``delivered_scripts`` list.
     """
 
     if not scripts:
         logger.info("No scripts to deliver.")
-        return {"sent": 0, "failed": 0}
+        return _delivery_result(0, 0, [], include_details)
 
     dry = test_mode or config.is_test_mode() or config.DRY_RUN
 
     if not dry and config._is_placeholder(config.TELEGRAM_BOT_TOKEN):
         logger.warning("TELEGRAM_BOT_TOKEN is missing or placeholder; skipping delivery.")
-        return {"sent": 0, "failed": 0}
+        return _delivery_result(0, 0, [], include_details)
 
     arizona = [s for s in scripts if s.get("campus") == "uofa"]
     calpoly = [s for s in scripts if s.get("campus") == "calpoly"]
 
     sent = 0
     failed = 0
+    delivered_scripts: List[Dict[str, Any]] = []
     msg_count = 0
     separator_needed = bool(arizona and calpoly)
     total_messages = len(arizona) + len(calpoly) + (1 if separator_needed else 0)
@@ -62,6 +67,7 @@ def deliver_scripts(
         ok = _send_or_log(msg, dry)
         if ok:
             sent += 1
+            delivered_scripts.append(script)
         else:
             failed += 1
         msg_count += 1
@@ -81,6 +87,7 @@ def deliver_scripts(
         ok = _send_or_log(msg, dry)
         if ok:
             sent += 1
+            delivered_scripts.append(script)
         else:
             failed += 1
         msg_count += 1
@@ -88,7 +95,7 @@ def deliver_scripts(
             _rate_limit(dry=dry)
 
     logger.info("Delivery complete: %d sent, %d failed", sent, failed)
-    return {"sent": sent, "failed": failed}
+    return _delivery_result(sent, failed, delivered_scripts, include_details)
 
 
 def _format_message(script: Dict[str, Any]) -> str:
@@ -124,8 +131,8 @@ def _send_or_log(text: str, dry: bool) -> bool:
         logger.info("[DRY RUN] Would send:\n%s", text)
         return True
 
-    try:
-        response = requests.post(
+    response = request_with_retries(
+        lambda: requests.post(
             f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage",
             json={
                 "chat_id": config.TELEGRAM_CHANNEL_ID,
@@ -133,23 +140,13 @@ def _send_or_log(text: str, dry: bool) -> bool:
                 "parse_mode": "Markdown",
             },
             timeout=15,
-        )
-    except requests.RequestException as exc:
-        logger.error("Telegram send failed for %s: %s", label, exc)
-        return False
+        ),
+        service="Telegram",
+        operation=label,
+        logger=logger,
+    )
 
-    if response.status_code == 429:
-        retry_after = response.headers.get("Retry-After", "unknown")
-        logger.error("Telegram rate limited for %s (retry-after=%s).", label, retry_after)
-        return False
-
-    if response.status_code != 200:
-        logger.error(
-            "Telegram returned %d for %s: %s",
-            response.status_code,
-            label,
-            response.text[:200],
-        )
+    if response is None:
         return False
 
     logger.info("Telegram message sent: %s", label)
@@ -163,6 +160,23 @@ def _message_label(text: str) -> str:
     if not lines:
         return "empty message"
     return lines[0][:80]
+
+
+def _delivery_result(
+    sent: int,
+    failed: int,
+    delivered_scripts: List[Dict[str, Any]],
+    include_details: bool,
+) -> Dict[str, Any]:
+    """Return the default or expanded delivery result payload."""
+
+    result: Dict[str, Any] = {
+        "sent": sent,
+        "failed": failed,
+    }
+    if include_details:
+        result["delivered_scripts"] = delivered_scripts
+    return result
 
 
 def _rate_limit(*, dry: bool) -> None:

@@ -63,7 +63,7 @@ python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.template .env
 # Fill in API keys in .env
-python3 -m unittest discover -s tests -v  # Verify setup (139 tests)
+python3 -m unittest discover -s tests -v  # Verify setup (155 tests)
 ```
 
 ## Usage
@@ -87,6 +87,27 @@ python3 -m pipeline.main --campus calpoly
 python3 main.py --skip-scrape
 python3 -m pipeline.main --skip-scrape
 ```
+
+## Cron
+
+Use the repo-local wrapper so cron does not depend on shell profile state:
+
+```bash
+./run.sh
+```
+
+Example crontab:
+
+```cron
+# Unigliss Trend Radar — 12pm and 7pm MST (19:00 and 02:00 UTC)
+0 19 * * * /home/maxdabeast124/content-research-pipeline/run.sh
+0 2 * * * /home/maxdabeast124/content-research-pipeline/run.sh
+```
+
+Runtime logs:
+
+- `data/logs/pipeline.log` — rotating application log (5 MB, 3 backups)
+- `data/logs/cron.log` — stdout/stderr captured by `run.sh`
 
 ## Cost
 

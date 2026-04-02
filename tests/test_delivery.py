@@ -198,8 +198,9 @@ class DryRunTests(unittest.TestCase):
 class ApiFailureTests(unittest.TestCase):
     """Verify Telegram API error handling."""
 
+    @patch("pipeline.http_utils.time.sleep")
     @patch("pipeline.delivery.requests.post")
-    def test_send_failure_increments_failed(self, mock_post) -> None:
+    def test_send_failure_increments_failed(self, mock_post, mock_sleep) -> None:
         mock_post.side_effect = requests.ConnectionError("timeout")
 
         scripts = [_make_script()]
@@ -215,12 +216,14 @@ class ApiFailureTests(unittest.TestCase):
 
         self.assertEqual(result["sent"], 0)
         self.assertEqual(result["failed"], 1)
+        self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 2])
 
     @patch("pipeline.delivery.requests.post")
     def test_non_200_increments_failed(self, mock_post) -> None:
         mock_response = MagicMock()
         mock_response.status_code = 403
         mock_response.text = "Forbidden"
+        mock_response.headers = {}
         mock_post.return_value = mock_response
 
         scripts = [_make_script()]
@@ -235,6 +238,59 @@ class ApiFailureTests(unittest.TestCase):
             result = deliver_scripts(scripts)
 
         self.assertEqual(result["failed"], 1)
+
+    @patch("pipeline.http_utils.time.sleep")
+    @patch("pipeline.delivery.requests.post")
+    def test_rate_limit_retries_then_sends(self, mock_post, mock_sleep) -> None:
+        retry_response = MagicMock()
+        retry_response.status_code = 429
+        retry_response.text = "Too Many Requests"
+        retry_response.headers = {"Retry-After": "1"}
+
+        success_response = MagicMock()
+        success_response.status_code = 200
+        success_response.text = "ok"
+        success_response.headers = {}
+        mock_post.side_effect = [retry_response, success_response]
+
+        scripts = [_make_script()]
+
+        with patch("pipeline.delivery.config") as mock_config:
+            mock_config.is_test_mode.return_value = False
+            mock_config.DRY_RUN = False
+            mock_config._is_placeholder.return_value = False
+            mock_config.TELEGRAM_BOT_TOKEN = "real-token"
+            mock_config.TELEGRAM_CHANNEL_ID = "-100123"
+
+            result = deliver_scripts(scripts)
+
+        self.assertEqual(mock_post.call_count, 2)
+        mock_sleep.assert_called_once_with(1)
+        self.assertEqual(result, {"sent": 1, "failed": 0})
+
+    @patch("pipeline.delivery.requests.post")
+    def test_401_logs_invalid_key_without_retry(self, mock_post) -> None:
+        unauthorized = MagicMock()
+        unauthorized.status_code = 401
+        unauthorized.text = "Unauthorized"
+        unauthorized.headers = {}
+        mock_post.return_value = unauthorized
+
+        scripts = [_make_script()]
+
+        with patch("pipeline.delivery.config") as mock_config:
+            mock_config.is_test_mode.return_value = False
+            mock_config.DRY_RUN = False
+            mock_config._is_placeholder.return_value = False
+            mock_config.TELEGRAM_BOT_TOKEN = "real-token"
+            mock_config.TELEGRAM_CHANNEL_ID = "-100123"
+
+            with self.assertLogs("pipeline.delivery", level="ERROR") as captured:
+                result = deliver_scripts(scripts)
+
+        self.assertEqual(result, {"sent": 0, "failed": 1})
+        self.assertEqual(mock_post.call_count, 1)
+        self.assertTrue(any("API key invalid or expired for Telegram." in line for line in captured.output))
 
     def test_placeholder_token_skips(self) -> None:
         scripts = [_make_script()]

@@ -167,6 +167,64 @@ class PipelineWiringTests(unittest.TestCase):
             # Should not raise
             run_pipeline(dry_run=True)
 
+    @patch("pipeline.main.deliver_scripts")
+    @patch("pipeline.main.generate_scripts")
+    @patch("pipeline.main.analyze_posts")
+    @patch("pipeline.main.scrape_instagram")
+    @patch("pipeline.main.scrape_tiktok")
+    @patch("pipeline.main.config")
+    def test_run_pipeline_logs_required_summary(
+        self, mock_config, mock_tt, mock_ig, mock_analyze, mock_gen, mock_deliver
+    ) -> None:
+        mock_config.validate_config.return_value = {"DATA_DIR": "ok (exists)", "LOG_DIR": "ok (exists)"}
+        mock_config.is_test_mode.return_value = False
+        mock_config.DRY_RUN = False
+
+        mock_tt.return_value = [{"post_id": "tk_001"}]
+        mock_ig.return_value = [{"post_id": "ig_001"}]
+        mock_analyze.return_value = [
+            {"post_id": "tk_001", "composite_score": 80, "recommended_campus": "both"}
+        ]
+        mock_gen.return_value = [
+            {"campus": "uofa", "brief": "test", "source_url": "", "generated_at": "", "trend_type": ""}
+        ]
+        mock_deliver.return_value = {"sent": 1, "failed": 0, "delivered_scripts": []}
+
+        with patch("pipeline.main._save_cache"), self.assertLogs("pipeline.main", level="INFO") as captured:
+            run_pipeline(dry_run=True)
+
+        self.assertTrue(
+            any(
+                "Run complete: scraped=2, analyzed=1, scripted=1, delivered=1, errors=0"
+                in line
+                for line in captured.output
+            )
+        )
+
+    @patch("pipeline.main.deliver_scripts")
+    @patch("pipeline.main.generate_scripts")
+    @patch("pipeline.main.analyze_posts")
+    @patch("pipeline.main.scrape_instagram")
+    @patch("pipeline.main.scrape_tiktok")
+    @patch("pipeline.main.config")
+    def test_unhandled_exception_is_logged_and_does_not_raise(
+        self, mock_config, mock_tt, mock_ig, mock_analyze, mock_gen, mock_deliver
+    ) -> None:
+        mock_config.validate_config.return_value = {"DATA_DIR": "ok (exists)", "LOG_DIR": "ok (exists)"}
+        mock_config.is_test_mode.return_value = False
+        mock_config.DRY_RUN = False
+
+        mock_tt.return_value = [{"post_id": "tk_001"}]
+        mock_ig.return_value = []
+        mock_analyze.side_effect = RuntimeError("boom")
+
+        with patch("pipeline.main._save_cache"), self.assertLogs("pipeline.main", level="ERROR") as captured:
+            run_pipeline(dry_run=True)
+
+        mock_gen.assert_not_called()
+        mock_deliver.assert_not_called()
+        self.assertTrue(any("Unhandled pipeline error during run." in line for line in captured.output))
+
 
 class CliSmokeTests(unittest.TestCase):
     """Verify the CLI entry points execute successfully in dry-run mode."""

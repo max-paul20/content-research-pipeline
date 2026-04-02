@@ -142,8 +142,9 @@ ANALYZER_MIN_SCORE = _get_env_int("ANALYZER_MIN_SCORE", 50)
 RUN_INTERVAL_HOURS = 6
 DEFAULT_CAMPUS = None
 DATA_DIR = PROJECT_ROOT / "data"
-LOG_DIR = PROJECT_ROOT / "logs"
+LOG_DIR = DATA_DIR / "logs"
 SEEN_POSTS_FILE = DATA_DIR / "seen_posts.json"
+SCRIPTED_POSTS_FILE = DATA_DIR / "scripted_posts.json"
 DRY_RUN = _get_env_bool("DRY_RUN", False)
 TEST_MODE = _get_env_bool("TEST_MODE", False)
 
@@ -208,6 +209,7 @@ __all__ = [
     "SCRIPTS_PER_CAMPUS",
     "SCRAPE_LIMIT",
     "SEEN_POSTS_FILE",
+    "SCRIPTED_POSTS_FILE",
     "SUPPORTED_CAMPUSES",
     "TELEGRAM_BOT_TOKEN",
     "TELEGRAM_CHANNEL_ID",

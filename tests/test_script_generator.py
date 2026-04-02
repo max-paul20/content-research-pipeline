@@ -286,8 +286,9 @@ class ApiIntegrationTests(unittest.TestCase):
         self.assertEqual(headers["x-api-key"], "sk-ant-test")
         self.assertEqual(headers["anthropic-version"], "2023-06-01")
 
+    @patch("pipeline.http_utils.time.sleep")
     @patch("pipeline.script_generator.requests.post")
-    def test_api_failure_skips_script(self, mock_post) -> None:
+    def test_api_failure_skips_script(self, mock_post, mock_sleep) -> None:
         mock_post.side_effect = requests.ConnectionError("timeout")
 
         posts = [_make_analyzed_post("p1", campus="uofa")]
@@ -303,12 +304,15 @@ class ApiIntegrationTests(unittest.TestCase):
             result = generate_scripts(posts)
 
         self.assertEqual(result, [])
+        self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 2])
 
+    @patch("pipeline.http_utils.time.sleep")
     @patch("pipeline.script_generator.requests.post")
-    def test_non_200_status_skips_script(self, mock_post) -> None:
+    def test_non_200_status_skips_script(self, mock_post, mock_sleep) -> None:
         mock_response = MagicMock()
         mock_response.status_code = 503
         mock_response.text = "Service unavailable"
+        mock_response.headers = {}
         mock_post.return_value = mock_response
 
         posts = [_make_analyzed_post("p1", campus="uofa")]
@@ -324,6 +328,62 @@ class ApiIntegrationTests(unittest.TestCase):
             result = generate_scripts(posts)
 
         self.assertEqual(result, [])
+        self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 2])
+
+    @patch("pipeline.http_utils.time.sleep")
+    @patch("pipeline.script_generator.requests.post")
+    def test_5xx_retries_then_generates_script(self, mock_post, mock_sleep) -> None:
+        retry_response = MagicMock()
+        retry_response.status_code = 503
+        retry_response.text = "Service unavailable"
+        retry_response.headers = {}
+
+        success_response = MagicMock()
+        success_response.status_code = 200
+        success_response.text = _anthropic_response("Mock brief")
+        success_response.headers = {}
+        mock_post.side_effect = [retry_response, success_response]
+
+        posts = [_make_analyzed_post("p1", campus="uofa")]
+
+        with patch("pipeline.script_generator.config") as mock_config:
+            mock_config.is_test_mode.return_value = False
+            mock_config._is_placeholder.return_value = False
+            mock_config.ANTHROPIC_API_KEY = "sk-ant-test"
+            mock_config.ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+            mock_config.ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+            mock_config.SCRIPTS_PER_CAMPUS = 3
+
+            result = generate_scripts(posts)
+
+        self.assertEqual(mock_post.call_count, 2)
+        mock_sleep.assert_called_once_with(1)
+        self.assertEqual(len(result), 1)
+
+    @patch("pipeline.script_generator.requests.post")
+    def test_401_logs_invalid_key_without_retry(self, mock_post) -> None:
+        unauthorized = MagicMock()
+        unauthorized.status_code = 401
+        unauthorized.text = "Unauthorized"
+        unauthorized.headers = {}
+        mock_post.return_value = unauthorized
+
+        posts = [_make_analyzed_post("p1", campus="uofa")]
+
+        with patch("pipeline.script_generator.config") as mock_config:
+            mock_config.is_test_mode.return_value = False
+            mock_config._is_placeholder.return_value = False
+            mock_config.ANTHROPIC_API_KEY = "sk-ant-test"
+            mock_config.ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
+            mock_config.ANTHROPIC_MODEL = "claude-sonnet-4-20250514"
+            mock_config.SCRIPTS_PER_CAMPUS = 3
+
+            with self.assertLogs("pipeline.script_generator", level="ERROR") as captured:
+                result = generate_scripts(posts)
+
+        self.assertEqual(result, [])
+        self.assertEqual(mock_post.call_count, 1)
+        self.assertTrue(any("API key invalid or expired for Anthropic." in line for line in captured.output))
 
     @patch("pipeline.script_generator.requests.post")
     def test_target_campus_prevents_off_target_calls(self, mock_post) -> None:

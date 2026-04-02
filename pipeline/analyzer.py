@@ -16,6 +16,7 @@ from typing import Any, Dict, List
 import requests
 
 from . import config
+from .http_utils import request_with_retries
 from .knowledge_base import get_gemini_analysis_prompt
 
 logger = logging.getLogger(__name__)
@@ -71,8 +72,8 @@ def analyze_posts(
         batch = posts[i : i + _BATCH_SIZE]
         batch_input = _format_batch(batch)
 
-        try:
-            response = requests.post(
+        response = request_with_retries(
+            lambda: requests.post(
                 f"{config.GEMINI_API_ENDPOINT}?key={config.GEMINI_API_KEY}",
                 headers={"Content-Type": "application/json"},
                 json={
@@ -86,18 +87,14 @@ def analyze_posts(
                     },
                 },
                 timeout=30,
-            )
-            api_calls += 1
-        except requests.RequestException as exc:
-            logger.error("Gemini API request failed: %s", exc)
-            continue
+            ),
+            service="Gemini",
+            operation=f"analysis batch {(i // _BATCH_SIZE) + 1}",
+            logger=logger,
+        )
+        api_calls += 1
 
-        if response.status_code != 200:
-            logger.error(
-                "Gemini API returned %d: %s",
-                response.status_code,
-                response.text[:200],
-            )
+        if response is None:
             continue
 
         analyses = _parse_gemini_response(response.text)
@@ -158,25 +155,108 @@ def _parse_gemini_response(raw_text: str) -> List[Dict[str, Any]]:
 
 
 def _extract_json_array(text: str) -> List[Dict[str, Any]]:
-    """Parse a JSON array from text, stripping code fences if present."""
+    """Parse a JSON array or object from messy Gemini response text."""
 
-    text = text.strip()
-
-    # Strip markdown code fences
-    fence_match = re.search(r"```(?:json)?\s*\n?(.*?)```", text, re.DOTALL)
-    if fence_match:
-        text = fence_match.group(1).strip()
+    text = _clean_gemini_json_text(text)
+    if not text:
+        logger.warning("Gemini response did not contain JSON content.")
+        return []
 
     try:
         parsed = json.loads(text)
         if isinstance(parsed, list):
-            return [item for item in parsed if isinstance(item, dict)]
+            return _normalize_analysis_items(parsed)
         if isinstance(parsed, dict):
-            return [parsed]
+            return _normalize_analysis_items([parsed])
     except json.JSONDecodeError:
         logger.warning("Failed to parse Gemini JSON response: %.100s...", text)
 
     return []
+
+
+def _clean_gemini_json_text(text: str) -> str:
+    """Strip markdown fences and preamble text before the JSON payload."""
+
+    cleaned = re.sub(r"```(?:json)?\s*|```", "", text or "", flags=re.IGNORECASE).strip()
+    match = re.search(r"[\[{]", cleaned)
+    if match:
+        cleaned = cleaned[match.start():].strip()
+    return cleaned
+
+
+def _normalize_analysis_items(items: List[Any]) -> List[Dict[str, Any]]:
+    """Validate Gemini analysis objects and fill safe defaults."""
+
+    normalized: List[Dict[str, Any]] = []
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+
+        post_id = str(item.get("post_id", "")).strip()
+        if not post_id:
+            logger.warning("Skipping Gemini analysis item without post_id: %s", item)
+            continue
+
+        normalized.append(
+            {
+                "post_id": post_id,
+                "virality_score": _coerce_score(item.get("virality_score"), "virality_score", post_id),
+                "engagement_velocity": _coerce_string_field(
+                    item.get("engagement_velocity"),
+                    "engagement_velocity",
+                    post_id,
+                ),
+                "trend_type": _coerce_string_field(item.get("trend_type"), "trend_type", post_id),
+                "virality_reason": _coerce_string_field(
+                    item.get("virality_reason"),
+                    "virality_reason",
+                    post_id,
+                ),
+                "audio_lifecycle": _coerce_string_field(
+                    item.get("audio_lifecycle"),
+                    "audio_lifecycle",
+                    post_id,
+                ),
+                "relevance_score": _coerce_score(item.get("relevance_score"), "relevance_score", post_id),
+                "recommended_campus": _coerce_string_field(
+                    item.get("recommended_campus"),
+                    "recommended_campus",
+                    post_id,
+                ),
+            }
+        )
+
+    return normalized
+
+
+def _coerce_score(value: Any, field: str, post_id: str) -> int:
+    """Return a numeric score or a safe default when Gemini drifts."""
+
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, str):
+        try:
+            return int(float(value.strip()))
+        except ValueError:
+            pass
+    logger.warning("Gemini analysis for %s missing or invalid %s; defaulting to 0.", post_id, field)
+    return 0
+
+
+def _coerce_string_field(value: Any, field: str, post_id: str) -> Any:
+    """Return a string field or a module default when Gemini drifts."""
+
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    if value not in (None, ""):
+        logger.warning(
+            "Gemini analysis for %s invalid %s; defaulting to %r.",
+            post_id,
+            field,
+            _default_for(field),
+        )
+    return _default_for(field)
 
 
 def _merge_analyses(
