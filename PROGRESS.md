@@ -1,7 +1,7 @@
 # Unigliss Trend Radar — Build Progress
 
-**Last updated:** 2026-04-02
-**Total tests:** 155 passing, 0 failing
+**Last updated:** 2026-04-16
+**Total tests:** 228 passing, 0 failing
 
 ---
 
@@ -50,12 +50,17 @@ Impact on plan: all six items are implementation-level and do not change the pub
 | `pipeline/scrapers/_common.py` | Built + verified | 49 (shared scraper coverage) | Shared schema, normalization, endpoint handling, dedup helpers |
 | `pipeline/scrapers/tiktok.py` | Built + verified | Covered in `tests/test_scrapers.py` | TikTok scraping via Scraptik + seen-post dedup |
 | `pipeline/scrapers/instagram.py` | Built + verified | Covered in `tests/test_scrapers.py` | Instagram scraping via Scraptik + seen-post dedup |
-| `pipeline/analyzer.py` | Built + verified | 28 | Gemini Tier 1 analysis, JSON recovery, scoring, retry-path handling |
+| `pipeline/analyzer_legacy.py` | Built + verified | 28 | Gemini Tier 1 analysis, JSON recovery, scoring, retry-path handling (renamed from `analyzer.py` in Phase 4) |
 | `pipeline/script_generator.py` | Built + verified | 21 | Sonnet Tier 2 creative briefs, campus split, retry-path handling |
-| `pipeline/delivery.py` | Built + verified | 18 | Telegram formatting, ordering, dry-run delivery, retry-path handling |
-| `pipeline/main.py` | Built + verified | 13 | CLI orchestrator, cache loading, campus filtering, run summaries |
+| `pipeline/delivery.py` | Built + verified | 29 | Telegram formatting, ordering, dry-run delivery, `deliver_report` with 4000-char chunking and plain-text send, retry-path handling |
+| `pipeline/main.py` | Built + verified | 13 sync + 5 async | CLI orchestrator, async verify-retry loop (`test_orchestrator.py`), cache loading, campus filtering, run summaries |
 | `pipeline/history.py` | Built + verified | 3 | Cross-run scripted-post history, 7-day expiry, pre-analysis dedup |
 | `pipeline/http_utils.py` | Built + verified | Shared via analyzer/script generator/delivery tests | Shared retry helper with exponential backoff and 401 short-circuit |
+| `pipeline/gemini_utils.py` | Built + verified | 15 | Shared Gemini transport + JSON parse helpers (lifted from analyzer/agents in Phase 4) |
+| `pipeline/skills.py` | Built + verified | 5 | Markdown skill loader for the multi-agent layer |
+| `pipeline/agents.py` | Built + verified | 15 | Four parallel Gemini lens agents + `run_parallel_analysis` merge |
+| `pipeline/report_writer.py` | Built + verified | 8 | Claude Sonnet insight-report writer with `cache_control: ephemeral` |
+| `pipeline/report_verifier.py` | Built + verified | 14 | Gemini Flash-Lite verifier with fail-open semantics |
 | `logging_utils.py` | Built + verified | 2 | Console + rotating file logging setup |
 
 ## Operational Hardening
@@ -74,17 +79,25 @@ Impact on plan: all six items are implementation-level and do not change the pub
 | `tests/test_scrapers.py` | 49 |
 | `tests/test_analyzer.py` | 28 |
 | `tests/test_script_generator.py` | 21 |
-| `tests/test_delivery.py` | 18 |
+| `tests/test_delivery.py` | 29 |
 | `tests/test_main.py` | 13 |
 | `tests/test_history.py` | 3 |
 | `tests/test_logging_setup.py` | 2 |
-| **Total** | **155** |
+| `tests/test_skills.py` | 5 |
+| `tests/test_gemini_utils.py` | 15 |
+| `tests/test_agents.py` | 15 |
+| `tests/test_report_writer.py` | 8 |
+| `tests/test_report_verifier.py` | 14 |
+| `tests/test_orchestrator.py` | 5 |
+| **Total** | **228** |
 
 ## Architecture
 
 Two-tier AI pipeline:
-1. **Gemini Flash-Lite** (free) — batch analysis, scoring, filtering
-2. **Claude Sonnet** (paid) — campus-specific creative brief generation
+1. **Gemini Flash-Lite** (free) — legacy post ranker + four parallel lens agents (engagement, trends, competitors, content classification) + report verifier.
+2. **Claude Sonnet** (paid) — campus-specific creative briefs and a cross-campus insight report (with `cache_control: ephemeral` on the writer's system block).
+
+The async orchestrator (`pipeline/main.py::run_pipeline_async`) runs the legacy ranker and the four lens agents in parallel, then fans out report generation and script generation, then runs the verify-retry loop (max 1 retry, deliver regardless), then delivers scripts followed by the report.
 
 Operational hardening is complete: seen-post dedup in scrapers, scripted-post history before analysis, rotating logs, shared retry/backoff, and cron-safe startup.
 
