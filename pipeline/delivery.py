@@ -103,8 +103,9 @@ def deliver_report(report: str, test_mode: bool = False) -> Dict[str, Any]:
 
     Reuses :func:`_send_or_log` for transport parity with
     :func:`deliver_scripts`. Returns ``{"sent": 1, "failed": 0}`` on success
-    or ``{"sent": 0, "failed": 1}`` when the send fails or the Telegram token
-    is a placeholder on a live run.
+    and ``{"sent": 0, "failed": 1}`` only when an actual send attempt fails.
+    Empty reports and placeholder-token skips are treated as no-ops
+    (``{"sent": 0, "failed": 0}``), mirroring :func:`deliver_scripts`.
     """
 
     if not report or not report.strip():
@@ -115,7 +116,7 @@ def deliver_report(report: str, test_mode: bool = False) -> Dict[str, Any]:
 
     if not dry and config._is_placeholder(config.TELEGRAM_BOT_TOKEN):
         logger.warning("TELEGRAM_BOT_TOKEN is missing or placeholder; skipping report delivery.")
-        return {"sent": 0, "failed": 1}
+        return {"sent": 0, "failed": 0}
 
     ok = _send_or_log(report, dry)
     return {"sent": 1 if ok else 0, "failed": 0 if ok else 1}
