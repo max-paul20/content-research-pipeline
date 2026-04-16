@@ -69,7 +69,13 @@ def _format_posts(posts: List[Dict[str, Any]]) -> str:
     return json.dumps(summaries, indent=2)
 
 
-def _call_gemini(system_prompt: str, user_text: str, *, operation: str) -> requests.Response | None:
+def call_gemini(system_prompt: str, user_text: str, *, operation: str) -> requests.Response | None:
+    """Send a single Gemini Flash-Lite request through the shared retry helper.
+
+    Shared with :mod:`pipeline.report_verifier` so both layers use the same
+    URL, auth, and JSON-mode generation config.
+    """
+
     return request_with_retries(
         lambda: requests.post(
             f"{config.GEMINI_API_ENDPOINT}?key={config.GEMINI_API_KEY}",
@@ -90,12 +96,12 @@ def _call_gemini(system_prompt: str, user_text: str, *, operation: str) -> reque
     )
 
 
-def _parse_gemini_object(raw_text: str) -> Dict[str, Any] | None:
+def parse_gemini_object(raw_text: str) -> Dict[str, Any] | None:
     """Extract a JSON object from Gemini's response.
 
-    Handles three shapes (mirrors :mod:`pipeline.analyzer` for the array
-    case): clean JSON object, JSON wrapped in the Gemini ``candidates``
-    structure, and JSON inside markdown code fences.
+    Handles clean JSON, JSON wrapped in the Gemini ``candidates`` structure,
+    and JSON inside markdown code fences. Mirrors :mod:`pipeline.analyzer`
+    for the array case.
     """
 
     try:
@@ -140,7 +146,9 @@ def _clean_json_text(text: str) -> str:
     return cleaned
 
 
-def _gemini_credentials_ok() -> bool:
+def gemini_credentials_ok() -> bool:
+    """Return whether the Gemini API key is set and not a placeholder."""
+
     return bool(config.GEMINI_API_KEY) and not config._is_placeholder(config.GEMINI_API_KEY)
 
 
@@ -155,7 +163,7 @@ def _run_agent(
     if test_mode or config.is_test_mode():
         return _safe_default(agent)
 
-    if not _gemini_credentials_ok():
+    if not gemini_credentials_ok():
         logger.warning(
             "GEMINI_API_KEY missing or placeholder; %s agent returning safe default.",
             agent,
@@ -168,11 +176,11 @@ def _run_agent(
 
     system_prompt = load_skill(skill_name)
     user_text = _format_posts(posts)
-    response = _call_gemini(system_prompt, user_text, operation=f"{agent} agent")
+    response = call_gemini(system_prompt, user_text, operation=f"{agent} agent")
     if response is None:
         return _safe_default(agent)
 
-    parsed = _parse_gemini_object(response.text)
+    parsed = parse_gemini_object(response.text)
     if parsed is None:
         logger.warning("%s agent could not parse Gemini response; using safe default.", agent)
         return _safe_default(agent)
@@ -250,6 +258,9 @@ async def run_parallel_analysis(
 
 
 __all__ = [
+    "call_gemini",
+    "gemini_credentials_ok",
+    "parse_gemini_object",
     "run_engagement_analyzer",
     "run_trend_detector",
     "run_competitor_analyzer",
