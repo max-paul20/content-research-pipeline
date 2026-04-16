@@ -13,7 +13,7 @@ The pipeline uses two AI tiers to balance cost and quality:
 **Tier 2 — Claude Sonnet (paid)**
 - Script generator (`pipeline/script_generator.py`): up to 3 briefs per campus, drawing the ranked top-N from the legacy analyzer + campus context from `knowledge_base.py`.
 - Insight report writer (`pipeline/report_writer.py`): one cross-campus markdown brief per run, consumes the merged four-lens dict. The Anthropic system block carries `cache_control: {"type": "ephemeral"}` so the skill prompt is served from the prompt cache between runs.
-- Up to 7 Anthropic calls per run under current caps (6 scripts + 1 report; a second call fires only when the verifier flags a regeneration).
+- Up to 8 Anthropic calls per run under current caps (6 scripts + 1 report + 1 optional retry when the verifier flags a regeneration).
 
 **Why two tiers?** Gemini is free but less creative. Sonnet is excellent at tone and format but costs money. Gemini filters up to 130 posts into ranked candidates and fans them out across four lens agents that feed Sonnet both the script and the insight report.
 
@@ -57,7 +57,7 @@ flowchart TD
 
 ### Agent → skill → output contract
 
-Every analysis tier loads its system prompt from a flat markdown file under `skills/` via `pipeline/skills.py::load_skill`. Lens agents fail to a safe-default shape on any error so a partial Gemini outage never breaks the run; the verifier fails open for the same reason.
+Every new multi-agent tier — the four lens agents, the report writer, and the verifier — loads its system prompt from a flat markdown file under `skills/` via `pipeline/skills.py::load_skill`. The legacy analyzer and script generator pre-date the skills layer and keep their prompts in `pipeline/knowledge_base.py` (the script generator is campus-parameterized, which the current skill loader does not template). Lens agents fail to a safe-default shape on any error so a partial Gemini outage never breaks the run; the verifier fails open for the same reason.
 
 | Agent | Module | Skill file | Output contract | Safe-default shape |
 |---|---|---|---|---|
