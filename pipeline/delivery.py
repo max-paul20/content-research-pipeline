@@ -98,6 +98,29 @@ def deliver_scripts(
     return _delivery_result(sent, failed, delivered_scripts, include_details)
 
 
+def deliver_report(report: str, test_mode: bool = False) -> Dict[str, Any]:
+    """Send a single free-form report message to the Telegram channel.
+
+    Reuses :func:`_send_or_log` for transport parity with
+    :func:`deliver_scripts`. Returns ``{"sent": 1, "failed": 0}`` on success
+    or ``{"sent": 0, "failed": 1}`` when the send fails or the Telegram token
+    is a placeholder on a live run.
+    """
+
+    if not report or not report.strip():
+        logger.info("No report body to deliver.")
+        return {"sent": 0, "failed": 0}
+
+    dry = test_mode or config.is_test_mode() or config.DRY_RUN
+
+    if not dry and config._is_placeholder(config.TELEGRAM_BOT_TOKEN):
+        logger.warning("TELEGRAM_BOT_TOKEN is missing or placeholder; skipping report delivery.")
+        return {"sent": 0, "failed": 1}
+
+    ok = _send_or_log(report, dry)
+    return {"sent": 1 if ok else 0, "failed": 0 if ok else 1}
+
+
 def _format_message(script: Dict[str, Any]) -> str:
     """Format a script dict as a Telegram message."""
 

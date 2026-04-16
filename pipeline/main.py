@@ -7,6 +7,7 @@ single CLI-driven pipeline.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import logging
 import sys
@@ -16,14 +17,17 @@ from typing import Any, Dict, List
 from logging_utils import configure_logging
 
 from . import config
+from .agents import run_parallel_analysis
 from .analyzer import analyze_posts
-from .delivery import deliver_scripts
+from .delivery import deliver_report, deliver_scripts
 from .history import (
     filter_unscripted_posts,
     load_scripted_posts,
     record_scripted_posts,
     save_scripted_posts,
 )
+from .report_verifier import verify_report
+from .report_writer import generate_report
 from .scrapers import scrape_instagram, scrape_tiktok
 from .scrapers._common import utc_now_iso
 from .script_generator import generate_scripts
@@ -35,6 +39,26 @@ _SCRIPTED_POSTS_FILE = config.SCRIPTED_POSTS_FILE
 
 
 def run_pipeline(
+    dry_run: bool = False,
+    campus: str | None = None,
+    skip_scrape: bool = False,
+) -> None:
+    """Execute the full Trend Radar pipeline.
+
+    Synchronous wrapper around :func:`run_pipeline_async` so the CLI and
+    existing tests can keep calling it without asyncio awareness.
+    """
+
+    asyncio.run(
+        run_pipeline_async(
+            dry_run=dry_run,
+            campus=campus,
+            skip_scrape=skip_scrape,
+        )
+    )
+
+
+async def run_pipeline_async(
     dry_run: bool = False,
     campus: str | None = None,
     skip_scrape: bool = False,
@@ -105,9 +129,16 @@ def run_pipeline(
             _log_run_summary(stats)
             return
 
-        # Analyze
-        analyzed = analyze_posts(posts, test_mode=dry_run)
+        # Analyze in parallel: legacy ranked list + four-lens dict
+        analyzed, analysis_dict = await asyncio.gather(
+            asyncio.to_thread(analyze_posts, posts, test_mode=dry_run),
+            run_parallel_analysis(posts, test_mode=dry_run),
+        )
         logger.info("Analyzed: %d posts passed scoring threshold.", len(analyzed))
+        logger.info(
+            "Lens agents returned keys: %s.",
+            sorted(analysis_dict.keys()),
+        )
         stats["analyzed"] = len(analyzed)
 
         if not analyzed:
@@ -124,12 +155,17 @@ def run_pipeline(
             logger.info("Filtered to %d posts for campus '%s'.", len(analyzed), target_campus)
             stats["analyzed"] = len(analyzed)
 
-        # Generate scripts
-        scripts = generate_scripts(
-            analyzed,
-            test_mode=dry_run,
-            target_campus=target_campus,
+        # Generate report + scripts in parallel
+        report, scripts = await asyncio.gather(
+            generate_report(analysis_dict, test_mode=dry_run),
+            asyncio.to_thread(
+                generate_scripts,
+                analyzed,
+                test_mode=dry_run,
+                target_campus=target_campus,
+            ),
         )
+        logger.info("Report writer returned %d chars.", len(report))
         logger.info("Generated %d scripts.", len(scripts))
         stats["scripted"] = len(scripts)
 
@@ -138,10 +174,38 @@ def run_pipeline(
             scripts = [s for s in scripts if s.get("campus") == target_campus]
             stats["scripted"] = len(scripts)
 
-        # Deliver
-        result = deliver_scripts(scripts, test_mode=dry_run, include_details=True)
+        # Verify the report; regenerate once on failure, then deliver regardless
+        verdict = await verify_report(report, analysis_dict, test_mode=dry_run)
+        logger.info(
+            "Verifier verdict: overallPass=%s, rules=%d.",
+            verdict.get("overallPass"),
+            len(verdict.get("rules") or []),
+        )
+        if not verdict.get("overallPass") and verdict.get("retryInstructions"):
+            logger.info("Regenerating report with verifier feedback (1 retry).")
+            report = await generate_report(
+                analysis_dict,
+                test_mode=dry_run,
+                retry_instructions=verdict["retryInstructions"],
+            )
+            logger.info("Regenerated report: %d chars.", len(report))
+
+        # Deliver scripts, then report
+        result = await asyncio.to_thread(
+            deliver_scripts, scripts, test_mode=dry_run, include_details=True
+        )
         stats["delivered"] = result["sent"]
         stats["errors"] += result["failed"]
+
+        report_result = await asyncio.to_thread(
+            deliver_report, report, test_mode=dry_run
+        )
+        logger.info(
+            "Report delivery: %d sent, %d failed.",
+            report_result["sent"],
+            report_result["failed"],
+        )
+
         if live_delivery:
             delivered_scripts = result.get("delivered_scripts", [])
             if delivered_scripts:
