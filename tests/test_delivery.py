@@ -8,6 +8,7 @@ import requests
 from pipeline.script_generator import generate_scripts
 from pipeline.delivery import (
     _format_message,
+    deliver_report,
     deliver_scripts,
 )
 
@@ -304,6 +305,51 @@ class ApiFailureTests(unittest.TestCase):
             result = deliver_scripts(scripts)
 
         self.assertEqual(result, {"sent": 0, "failed": 0})
+
+
+class DeliverReportTests(unittest.TestCase):
+    """Verify single-message report delivery semantics."""
+
+    def test_empty_report_is_noop(self) -> None:
+        self.assertEqual(deliver_report(""), {"sent": 0, "failed": 0})
+        self.assertEqual(deliver_report("   \n  "), {"sent": 0, "failed": 0})
+
+    def test_placeholder_token_is_noop(self) -> None:
+        with patch("pipeline.delivery.config") as mock_config:
+            mock_config.is_test_mode.return_value = False
+            mock_config.DRY_RUN = False
+            mock_config._is_placeholder.return_value = True
+            mock_config.TELEGRAM_BOT_TOKEN = "your-bot-token"
+
+            with self.assertLogs("pipeline.delivery", level="WARNING"):
+                result = deliver_report("# report body")
+
+        self.assertEqual(result, {"sent": 0, "failed": 0})
+
+    def test_dry_run_is_success_without_http(self) -> None:
+        with patch("pipeline.delivery.requests.post") as mock_post:
+            result = deliver_report("# report body", test_mode=True)
+        mock_post.assert_not_called()
+        self.assertEqual(result, {"sent": 1, "failed": 0})
+
+    @patch("pipeline.delivery.requests.post")
+    def test_send_failure_returns_failed_one(self, mock_post) -> None:
+        unauthorized = MagicMock()
+        unauthorized.status_code = 401
+        unauthorized.text = "Unauthorized"
+        unauthorized.headers = {}
+        mock_post.return_value = unauthorized
+
+        with patch("pipeline.delivery.config") as mock_config:
+            mock_config.is_test_mode.return_value = False
+            mock_config.DRY_RUN = False
+            mock_config._is_placeholder.return_value = False
+            mock_config.TELEGRAM_BOT_TOKEN = "real-token"
+            mock_config.TELEGRAM_CHANNEL_ID = "-100123"
+
+            result = deliver_report("# report body")
+
+        self.assertEqual(result, {"sent": 0, "failed": 1})
 
 
 if __name__ == "__main__":
