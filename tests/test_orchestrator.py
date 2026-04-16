@@ -8,7 +8,6 @@ generation, the verifier verdict, and the single-retry regeneration.
 """
 
 import unittest
-from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from pipeline.main import run_pipeline
@@ -62,7 +61,6 @@ class VerifyRetryLoopTests(unittest.TestCase):
             "DATA_DIR": "ok (exists)",
             "LOG_DIR": "ok (exists)",
         }
-        config_mock.DATA_DIR = Path("/tmp/test_data")
         config_mock.is_test_mode.return_value = False
         config_mock.DRY_RUN = False
 
@@ -87,6 +85,11 @@ class VerifyRetryLoopTests(unittest.TestCase):
             ),
             patch("pipeline.main.deliver_report", return_value={"sent": 1, "failed": 0}),
             patch("pipeline.main._save_cache"),
+            # Isolate from real data/scripted_posts.json — _SCRIPTED_POSTS_FILE is
+            # bound at import time, so patching config.DATA_DIR alone doesn't reach it.
+            patch("pipeline.main.load_scripted_posts", return_value=[]),
+            patch("pipeline.main.save_scripted_posts"),
+            patch("pipeline.main.record_scripted_posts", return_value=[]),
         ]
         return patches, generate_report_mock, verify_mock
 
