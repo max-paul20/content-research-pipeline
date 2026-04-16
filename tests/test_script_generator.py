@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-from pipeline.analyzer import _mock_analyze
+from pipeline.analyzer_legacy import _mock_analyze
 from pipeline.script_generator import (
     _build_user_prompt,
     _extract_brief,
@@ -195,7 +195,7 @@ class ContractTests(unittest.TestCase):
     """Verify schema compatibility between pipeline stages."""
 
     def test_analyzer_output_feeds_script_generator(self) -> None:
-        with patch("pipeline.analyzer.config") as mock_config:
+        with patch("pipeline.analyzer_legacy.config") as mock_config:
             mock_config.ANALYZER_MIN_SCORE = 0
             mock_config.ANALYZER_TOP_N = 15
             analyzed = _mock_analyze(

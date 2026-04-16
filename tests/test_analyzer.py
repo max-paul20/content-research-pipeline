@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import requests
 
-from pipeline.analyzer import (
+from pipeline.analyzer_legacy import (
     _extract_json_array,
     _format_batch,
     _merge_analyses,
@@ -133,7 +133,7 @@ class BatchingTests(unittest.TestCase):
         self.assertIn("caption", batch_data[0])
         self.assertIn("audio_name", batch_data[0])
 
-    @patch("pipeline.analyzer.requests.post")
+    @patch("pipeline.analyzer_legacy.requests.post")
     def test_batching_groups_posts_correctly(self, mock_post) -> None:
         """7 posts should produce 2 API calls (batch size 5)."""
 
@@ -159,7 +159,7 @@ class BatchingTests(unittest.TestCase):
 
         posts = [_make_post(f"post_{i}") for i in range(7)]
 
-        with patch("pipeline.analyzer.config") as mock_config:
+        with patch("pipeline.analyzer_legacy.config") as mock_config:
             mock_config.is_test_mode.return_value = False
             mock_config._is_placeholder.return_value = False
             mock_config.GEMINI_API_KEY = "real-key"
@@ -173,7 +173,7 @@ class BatchingTests(unittest.TestCase):
 
         self.assertEqual(mock_post.call_count, 2)
 
-    @patch("pipeline.analyzer.requests.post")
+    @patch("pipeline.analyzer_legacy.requests.post")
     def test_budget_stops_at_max_calls(self, mock_post) -> None:
         """API budget must stop making calls once limit is reached."""
 
@@ -184,7 +184,7 @@ class BatchingTests(unittest.TestCase):
 
         posts = [_make_post(f"post_{i}") for i in range(25)]
 
-        with patch("pipeline.analyzer.config") as mock_config:
+        with patch("pipeline.analyzer_legacy.config") as mock_config:
             mock_config.is_test_mode.return_value = False
             mock_config._is_placeholder.return_value = False
             mock_config.GEMINI_API_KEY = "real-key"
@@ -219,7 +219,7 @@ class ScoringTests(unittest.TestCase):
             {"post_id": "b", "composite_score": 30},
             {"post_id": "c", "composite_score": 60},
         ]
-        with patch("pipeline.analyzer.config") as mock_config:
+        with patch("pipeline.analyzer_legacy.config") as mock_config:
             mock_config.ANALYZER_MIN_SCORE = 50
             mock_config.ANALYZER_TOP_N = 10
             result = _rank_and_filter(posts)
@@ -230,7 +230,7 @@ class ScoringTests(unittest.TestCase):
 
     def test_rank_and_filter_caps_at_top_n(self) -> None:
         posts = [{"post_id": f"p{i}", "composite_score": 90 - i} for i in range(10)]
-        with patch("pipeline.analyzer.config") as mock_config:
+        with patch("pipeline.analyzer_legacy.config") as mock_config:
             mock_config.ANALYZER_MIN_SCORE = 0
             mock_config.ANALYZER_TOP_N = 3
             result = _rank_and_filter(posts)
@@ -272,14 +272,14 @@ class JsonParsingTests(unittest.TestCase):
 
     def test_malformed_json_returns_empty(self) -> None:
         text = "this is not json at all"
-        with self.assertLogs("pipeline.analyzer", level="WARNING") as captured:
+        with self.assertLogs("pipeline.analyzer_legacy", level="WARNING") as captured:
             result = _extract_json_array(text)
         self.assertEqual(result, [])
         self.assertTrue(any("Failed to parse Gemini JSON response" in line for line in captured.output))
 
     def test_truncated_json_returns_empty_and_logs_warning(self) -> None:
         text = '{"post_id": "a", "virality_score": 80'
-        with self.assertLogs("pipeline.analyzer", level="WARNING") as captured:
+        with self.assertLogs("pipeline.analyzer_legacy", level="WARNING") as captured:
             result = _extract_json_array(text)
         self.assertEqual(result, [])
         self.assertTrue(any("Failed to parse Gemini JSON response" in line for line in captured.output))
@@ -294,7 +294,7 @@ class JsonParsingTests(unittest.TestCase):
             '[{"post_id": "a", "virality_score": "high", "relevance_score": null, '
             '"trend_type": 42, "extra_field": "ignored"}]'
         )
-        with self.assertLogs("pipeline.analyzer", level="WARNING") as captured:
+        with self.assertLogs("pipeline.analyzer_legacy", level="WARNING") as captured:
             result = _extract_json_array(text)
 
         self.assertEqual(len(result), 1)
@@ -308,12 +308,12 @@ class ApiFailureTests(unittest.TestCase):
     """Verify graceful handling of API errors."""
 
     @patch("pipeline.http_utils.time.sleep")
-    @patch("pipeline.analyzer.requests.post")
+    @patch("pipeline.analyzer_legacy.requests.post")
     def test_request_exception_returns_empty(self, mock_post, mock_sleep) -> None:
         mock_post.side_effect = requests.ConnectionError("connection failed")
 
         posts = [_make_post("tk_001")]
-        with patch("pipeline.analyzer.config") as mock_config:
+        with patch("pipeline.analyzer_legacy.config") as mock_config:
             mock_config.is_test_mode.return_value = False
             mock_config._is_placeholder.return_value = False
             mock_config.GEMINI_API_KEY = "real-key"
@@ -329,7 +329,7 @@ class ApiFailureTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 2])
 
     @patch("pipeline.http_utils.time.sleep")
-    @patch("pipeline.analyzer.requests.post")
+    @patch("pipeline.analyzer_legacy.requests.post")
     def test_non_200_status_returns_empty(self, mock_post, mock_sleep) -> None:
         mock_response = MagicMock()
         mock_response.status_code = 500
@@ -338,7 +338,7 @@ class ApiFailureTests(unittest.TestCase):
         mock_post.return_value = mock_response
 
         posts = [_make_post("tk_001")]
-        with patch("pipeline.analyzer.config") as mock_config:
+        with patch("pipeline.analyzer_legacy.config") as mock_config:
             mock_config.is_test_mode.return_value = False
             mock_config._is_placeholder.return_value = False
             mock_config.GEMINI_API_KEY = "real-key"
@@ -354,7 +354,7 @@ class ApiFailureTests(unittest.TestCase):
         self.assertEqual([call.args[0] for call in mock_sleep.call_args_list], [1, 2])
 
     @patch("pipeline.http_utils.time.sleep")
-    @patch("pipeline.analyzer.requests.post")
+    @patch("pipeline.analyzer_legacy.requests.post")
     def test_5xx_retries_then_succeeds(self, mock_post, mock_sleep) -> None:
         retry_response = MagicMock()
         retry_response.status_code = 503
@@ -379,7 +379,7 @@ class ApiFailureTests(unittest.TestCase):
         )
         mock_post.side_effect = [retry_response, success_response]
 
-        with patch("pipeline.analyzer.config") as mock_config:
+        with patch("pipeline.analyzer_legacy.config") as mock_config:
             mock_config.is_test_mode.return_value = False
             mock_config._is_placeholder.return_value = False
             mock_config.GEMINI_API_KEY = "real-key"
@@ -395,7 +395,7 @@ class ApiFailureTests(unittest.TestCase):
         mock_sleep.assert_called_once_with(1)
         self.assertEqual(len(result), 1)
 
-    @patch("pipeline.analyzer.requests.post")
+    @patch("pipeline.analyzer_legacy.requests.post")
     def test_401_logs_invalid_key_without_retry(self, mock_post) -> None:
         unauthorized = MagicMock()
         unauthorized.status_code = 401
@@ -403,7 +403,7 @@ class ApiFailureTests(unittest.TestCase):
         unauthorized.headers = {}
         mock_post.return_value = unauthorized
 
-        with patch("pipeline.analyzer.config") as mock_config:
+        with patch("pipeline.analyzer_legacy.config") as mock_config:
             mock_config.is_test_mode.return_value = False
             mock_config._is_placeholder.return_value = False
             mock_config.GEMINI_API_KEY = "real-key"
@@ -413,7 +413,7 @@ class ApiFailureTests(unittest.TestCase):
             mock_config.ANALYZER_MIN_SCORE = 0
             mock_config.ANALYZER_TOP_N = 15
 
-            with self.assertLogs("pipeline.analyzer", level="ERROR") as captured:
+            with self.assertLogs("pipeline.analyzer_legacy", level="ERROR") as captured:
                 result = analyze_posts([_make_post("tk_001")])
 
         self.assertEqual(result, [])
@@ -422,7 +422,7 @@ class ApiFailureTests(unittest.TestCase):
 
     def test_placeholder_api_key_skips_analysis(self) -> None:
         posts = [_make_post("tk_001")]
-        with patch("pipeline.analyzer.config") as mock_config:
+        with patch("pipeline.analyzer_legacy.config") as mock_config:
             mock_config.is_test_mode.return_value = False
             mock_config._is_placeholder.return_value = True
             mock_config.GEMINI_API_KEY = "your-key-here"

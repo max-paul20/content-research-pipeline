@@ -16,7 +16,7 @@ import logging
 from typing import Any, Dict
 
 from . import config
-from .agents import call_gemini, gemini_credentials_ok, parse_gemini_object
+from .gemini_utils import call_gemini, gemini_credentials_ok, parse_gemini_object
 from .skills import load_skill
 
 logger = logging.getLogger(__name__)

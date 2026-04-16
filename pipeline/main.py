@@ -18,7 +18,7 @@ from logging_utils import configure_logging
 
 from . import config
 from .agents import run_parallel_analysis
-from .analyzer import analyze_posts
+from .analyzer_legacy import analyze_posts
 from .delivery import deliver_report, deliver_scripts
 from .history import (
     filter_unscripted_posts,
