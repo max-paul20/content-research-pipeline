@@ -16,27 +16,17 @@ _CACHE: Dict[str, str] = {}
 
 
 def load_skill(name: str) -> str:
-    """Return the markdown body of ``skills/<name>.md``, cached after first read.
-
-    Args:
-        name: Skill filename without the ``.md`` suffix
-            (e.g. ``"engagement-analysis"``).
-
-    Returns:
-        The raw markdown text of the skill file.
-
-    Raises:
-        FileNotFoundError: If the skill file does not exist on disk.
-    """
+    """Return the markdown body of ``skills/<name>.md``, cached after first read."""
 
     if name in _CACHE:
         return _CACHE[name]
 
     path = SKILLS_DIR / f"{name}.md"
-    if not path.exists():
-        raise FileNotFoundError(f"Skill not found: {path}")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise FileNotFoundError(f"Skill not found: {path}") from exc
 
-    text = path.read_text(encoding="utf-8")
     _CACHE[name] = text
     return text
 

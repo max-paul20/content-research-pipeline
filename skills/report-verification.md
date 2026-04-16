@@ -34,7 +34,7 @@ Check each rule independently. Mark `pass: true` only when the rule is fully sat
 
 Required structural rules:
 
-1. **Header present** — first non-empty line begins with `# Unigliss Trend Radar — ` followed by an ISO date.
+1. **Header present** — first non-empty line begins with `# Unigliss Trend Radar — ` followed by an ISO date that ends with a UTC marker (`Z` or `, UTC`).
 2. **All sections present** in this order: `## TL;DR`, `## Emerging Opportunities`, `## What to Skip or Remix`, `## Competitor Watch`, `## Campus Split`, `## Signal Quality`. No extra top-level sections.
 3. **Campus Split has two subsections** named `Arizona` and `Cal Poly` (case-insensitive match acceptable on subsection headers).
 4. **Word count between 800 and 1200**, inclusive. Count words in the body only (excluding the top header).

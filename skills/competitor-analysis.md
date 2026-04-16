@@ -54,7 +54,7 @@ Return ONLY valid JSON. No markdown fences, no preamble.
     {
       "gap": "what is missing in the batch",
       "evidence": "what you observed (or did not observe) that supports the gap",
-      "campus_fit": "uofa | calpoly | both",
+      "campus_fit": "uofa | calpoly | both | unclear",
       "first_script_idea": "concrete, filmable concept Unigliss could shoot to claim the gap"
     }
   ]

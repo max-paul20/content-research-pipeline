@@ -45,7 +45,7 @@ Return ONLY valid JSON. No markdown fences, no preamble, no commentary.
       "platform": "tiktok | instagram",
       "url": "string",
       "why": "1-2 sentence explanation citing the specific signal that pops",
-      "engagement_ratio": "string describing the lift, e.g. 'saves are 4.2x the batch median'",
+      "engagement_note": "short string describing the lift, e.g. 'saves are 4.2x the batch median'",
       "actionable_takeaway": "what a creator should copy or adapt"
     }
   ],

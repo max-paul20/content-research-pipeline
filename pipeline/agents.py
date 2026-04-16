@@ -17,7 +17,7 @@ import asyncio
 import json
 import logging
 import re
-from typing import Any, Awaitable, Callable, Dict, List
+from typing import Any, Awaitable, Dict, List
 
 import requests
 
@@ -32,8 +32,6 @@ _GEMINI_TIMEOUT = 60
 
 
 def _safe_default(agent: str) -> Dict[str, Any]:
-    """Return the empty-shape dict for the given agent name."""
-
     if agent == "engagement":
         return {"topPerformers": [], "engagementPatterns": {}}
     if agent == "trends":
@@ -46,8 +44,6 @@ def _safe_default(agent: str) -> Dict[str, Any]:
 
 
 def _format_posts(posts: List[Dict[str, Any]]) -> str:
-    """Serialize the post batch into the JSON string each agent receives."""
-
     summaries = []
     for post in posts:
         summaries.append(
@@ -74,8 +70,6 @@ def _format_posts(posts: List[Dict[str, Any]]) -> str:
 
 
 def _call_gemini(system_prompt: str, user_text: str, *, operation: str) -> requests.Response | None:
-    """Send a single Gemini Flash-Lite request through the shared retry helper."""
-
     return request_with_retries(
         lambda: requests.post(
             f"{config.GEMINI_API_ENDPOINT}?key={config.GEMINI_API_KEY}",
@@ -121,8 +115,6 @@ def _parse_gemini_object(raw_text: str) -> Dict[str, Any] | None:
 
 
 def _extract_json_object(text: str) -> Dict[str, Any] | None:
-    """Parse a JSON object from messy Gemini response text."""
-
     cleaned = _clean_json_text(text)
     if not cleaned:
         return None
@@ -141,8 +133,6 @@ def _extract_json_object(text: str) -> Dict[str, Any] | None:
 
 
 def _clean_json_text(text: str) -> str:
-    """Strip markdown fences and preamble before the JSON payload."""
-
     cleaned = re.sub(r"```(?:json)?\s*|```", "", text or "", flags=re.IGNORECASE).strip()
     match = re.search(r"[\[{]", cleaned)
     if match:
@@ -151,8 +141,6 @@ def _clean_json_text(text: str) -> str:
 
 
 def _gemini_credentials_ok() -> bool:
-    """Return whether the Gemini API key is set and not a placeholder."""
-
     return bool(config.GEMINI_API_KEY) and not config._is_placeholder(config.GEMINI_API_KEY)
 
 
@@ -227,11 +215,11 @@ def run_content_classifier(
     return _run_agent("contentThemes", "content-classification", posts, test_mode)
 
 
-_AGENT_ORDER = (
-    ("engagement", run_engagement_analyzer),
-    ("trends", run_trend_detector),
-    ("competitors", run_competitor_analyzer),
-    ("contentThemes", run_content_classifier),
+_AGENTS = (
+    ("engagement", "engagement-analysis"),
+    ("trends", "trend-detection"),
+    ("competitors", "competitor-analysis"),
+    ("contentThemes", "content-classification"),
 )
 
 
@@ -246,12 +234,13 @@ async def run_parallel_analysis(
     """
 
     coros: List[Awaitable[Dict[str, Any]]] = [
-        asyncio.to_thread(fn, posts, test_mode) for _, fn in _AGENT_ORDER
+        asyncio.to_thread(_run_agent, agent, skill, posts, test_mode)
+        for agent, skill in _AGENTS
     ]
     results = await asyncio.gather(*coros, return_exceptions=True)
 
     merged: Dict[str, Dict[str, Any]] = {}
-    for (agent, _fn), result in zip(_AGENT_ORDER, results):
+    for (agent, _skill), result in zip(_AGENTS, results):
         if isinstance(result, BaseException):
             logger.warning("%s agent raised %s; using safe default.", agent, result)
             merged[agent] = _safe_default(agent)

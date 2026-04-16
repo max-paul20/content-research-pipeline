@@ -85,7 +85,7 @@ Return ONLY valid JSON. No markdown fences, no preamble.
 }
 ```
 
-Cap `contentThemes` at 25 entries (the analyzer top-N is 15; allow some headroom for context). Keep `one_line_summary` under 200 characters.
+Cap `contentThemes` at 25 entries. Keep `one_line_summary` under 200 characters.
 
 # What NOT To Do
 
