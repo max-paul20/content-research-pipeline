@@ -7,7 +7,10 @@ import requests
 
 from pipeline.script_generator import generate_scripts
 from pipeline.delivery import (
+    _TELEGRAM_MESSAGE_LIMIT,
+    _chunk_text,
     _format_message,
+    deliver_report,
     deliver_scripts,
 )
 
@@ -304,6 +307,145 @@ class ApiFailureTests(unittest.TestCase):
             result = deliver_scripts(scripts)
 
         self.assertEqual(result, {"sent": 0, "failed": 0})
+
+
+class DeliverReportTests(unittest.TestCase):
+    """Verify single-message report delivery semantics."""
+
+    def test_empty_report_is_noop(self) -> None:
+        self.assertEqual(deliver_report(""), {"sent": 0, "failed": 0})
+        self.assertEqual(deliver_report("   \n  "), {"sent": 0, "failed": 0})
+
+    def test_placeholder_token_is_noop(self) -> None:
+        with patch("pipeline.delivery.config") as mock_config:
+            mock_config.is_test_mode.return_value = False
+            mock_config.DRY_RUN = False
+            mock_config._is_placeholder.return_value = True
+            mock_config.TELEGRAM_BOT_TOKEN = "your-bot-token"
+
+            with self.assertLogs("pipeline.delivery", level="WARNING"):
+                result = deliver_report("# report body")
+
+        self.assertEqual(result, {"sent": 0, "failed": 0})
+
+    def test_dry_run_is_success_without_http(self) -> None:
+        with patch("pipeline.delivery.requests.post") as mock_post:
+            result = deliver_report("# report body", test_mode=True)
+        mock_post.assert_not_called()
+        self.assertEqual(result, {"sent": 1, "failed": 0})
+
+    @patch("pipeline.delivery.requests.post")
+    def test_send_failure_returns_failed_one(self, mock_post) -> None:
+        unauthorized = MagicMock()
+        unauthorized.status_code = 401
+        unauthorized.text = "Unauthorized"
+        unauthorized.headers = {}
+        mock_post.return_value = unauthorized
+
+        with patch("pipeline.delivery.config") as mock_config:
+            mock_config.is_test_mode.return_value = False
+            mock_config.DRY_RUN = False
+            mock_config._is_placeholder.return_value = False
+            mock_config.TELEGRAM_BOT_TOKEN = "real-token"
+            mock_config.TELEGRAM_CHANNEL_ID = "-100123"
+
+            result = deliver_report("# report body")
+
+        self.assertEqual(result, {"sent": 0, "failed": 1})
+
+    def test_report_body_sent_without_parse_mode(self) -> None:
+        """Sonnet's ``**bold**`` would be rejected by Telegram Markdown v1."""
+
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.text = '{"ok": true}'
+        ok_resp.headers = {}
+
+        with patch("pipeline.delivery.requests.post", return_value=ok_resp) as mock_post, \
+                patch("pipeline.delivery.config") as mock_config:
+            mock_config.is_test_mode.return_value = False
+            mock_config.DRY_RUN = False
+            mock_config._is_placeholder.return_value = False
+            mock_config.TELEGRAM_BOT_TOKEN = "real-token"
+            mock_config.TELEGRAM_CHANNEL_ID = "-100123"
+
+            result = deliver_report("Plain **bold** body.")
+
+        self.assertEqual(result, {"sent": 1, "failed": 0})
+        self.assertEqual(mock_post.call_count, 1)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertEqual(payload["text"], "Plain **bold** body.")
+        self.assertNotIn("parse_mode", payload)
+
+    def test_long_report_is_chunked_under_limit(self) -> None:
+        """A 6k-char report gets split into multiple ≤4000-char sends."""
+
+        ok_resp = MagicMock()
+        ok_resp.status_code = 200
+        ok_resp.text = '{"ok": true}'
+        ok_resp.headers = {}
+
+        # Build a 6k-char body with paragraph boundaries so chunking has
+        # clean split points to work with.
+        paragraph = ("x" * 400 + "\n\n")  # ~402 chars
+        long_report = paragraph * 15  # ~6030 chars
+
+        with patch("pipeline.delivery.requests.post", return_value=ok_resp) as mock_post, \
+                patch("pipeline.delivery._rate_limit"), \
+                patch("pipeline.delivery.config") as mock_config:
+            mock_config.is_test_mode.return_value = False
+            mock_config.DRY_RUN = False
+            mock_config._is_placeholder.return_value = False
+            mock_config.TELEGRAM_BOT_TOKEN = "real-token"
+            mock_config.TELEGRAM_CHANNEL_ID = "-100123"
+
+            result = deliver_report(long_report)
+
+        self.assertGreater(mock_post.call_count, 1)
+        self.assertEqual(result["sent"], mock_post.call_count)
+        self.assertEqual(result["failed"], 0)
+        # Every chunk must stay under Telegram's hard cap.
+        for call in mock_post.call_args_list:
+            self.assertLessEqual(len(call.kwargs["json"]["text"]), _TELEGRAM_MESSAGE_LIMIT)
+
+
+class ChunkTextTests(unittest.TestCase):
+    """Direct coverage for the `_chunk_text` helper used by deliver_report."""
+
+    def test_short_text_returns_single_chunk(self) -> None:
+        self.assertEqual(_chunk_text("hello world", 4000), ["hello world"])
+
+    def test_prefers_paragraph_boundary(self) -> None:
+        a = "a" * 100
+        b = "b" * 100
+        text = f"{a}\n\n{b}"
+        chunks = _chunk_text(text, 150)
+        self.assertEqual(chunks[0], a)
+        self.assertEqual(chunks[1], b)
+
+    def test_falls_back_to_single_newline(self) -> None:
+        a = "a" * 100
+        b = "b" * 100
+        text = f"{a}\n{b}"
+        chunks = _chunk_text(text, 150)
+        self.assertEqual(chunks[0], a)
+        self.assertEqual(chunks[1], b)
+
+    def test_hard_cut_when_no_whitespace(self) -> None:
+        text = "x" * 500
+        chunks = _chunk_text(text, 100)
+        self.assertEqual(len(chunks), 5)
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk), 100)
+        self.assertEqual("".join(chunks), text)
+
+    def test_every_chunk_under_limit(self) -> None:
+        paragraph = ("word " * 80).strip() + "\n\n"  # ~400 chars
+        text = paragraph * 20
+        chunks = _chunk_text(text, 1000)
+        self.assertGreater(len(chunks), 1)
+        for chunk in chunks:
+            self.assertLessEqual(len(chunk), 1000)
 
 
 if __name__ == "__main__":

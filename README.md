@@ -1,34 +1,49 @@
 # Unigliss Trend Radar
 
-Content intelligence pipeline for [Unigliss](https://unigliss.com), a peer-to-peer beauty marketplace on college campuses. Scrapes viral beauty and lifestyle content from TikTok and Instagram, scores it with Gemini, generates campus-specific creator briefs with Claude Sonnet, and delivers them via Telegram.
+Content intelligence pipeline for [Unigliss](https://unigliss.com), a peer-to-peer beauty marketplace on college campuses. Scrapes viral beauty and lifestyle content from TikTok and Instagram, scores it with Gemini, generates a cross-campus insight report with Claude Sonnet (verified by Gemini Flash-Lite), generates campus-specific creator briefs with Claude Sonnet, and delivers everything via Telegram.
 
 **Live campuses:** University of Arizona and Cal Poly SLO.
-**Verification status:** 155 tests passing as of 2026-04-02.
+**Verification status:** 228 tests passing as of 2026-04-16.
 
 ## Architecture
 
 ```
-CRON (12:00 PM + 7:00 PM MST)
-  │
+CLI / CRON
+  │  `main.py`, `python -m pipeline.main`, or `run.sh`
   ▼
-SCRAPERS (RapidAPI / Scraptik)
-  │  Up to 130 posts from TikTok + Instagram
-  │  Hashtag search + trending feed + campus-specific tags
-  │
+STARTUP
+  │  Configure logging, validate config, load 7-day scripted history
   ▼
-TIER 1: GEMINI FLASH-LITE (free, up to 26 API calls/run)
-  │  Batch 5 posts per call
-  │  Score virality, classify trend type, tag audio lifecycle
-  │  Filter and rank → top 10-15 candidates
-  │
+SCRAPE OR LOAD CACHE
+  │  Up to 130 posts/run at current defaults
+  │  TikTok + Instagram, or `--skip-scrape` from `data/cached_posts.json`
   ▼
-TIER 2: CLAUDE SONNET (paid, ~6 API calls/run)
-  │  Up to 3 scripts for Arizona + up to 3 scripts for Cal Poly
-  │  Lean creative briefs, 100-200 words each
-  │
+PRE-ANALYSIS FILTER
+  │  Drop posts already present in `data/scripted_posts.json`
   ▼
-TELEGRAM (private channel)
-  │  Briefs sent to owner for review
+GEMINI FLASH-LITE (parallel)
+  │  Legacy analyzer: batch 5, up to 26 calls, ranks up to 15 candidates
+  │  4 lens agents (engagement, trends, competitors, content themes),
+  │  1 call each against the shared batch
+  ▼
+CAMPUS FILTER
+  │  Optional `--campus arizona|calpoly`
+  ▼
+CLAUDE SONNET (parallel)
+  │  Script generator: up to 3 briefs per campus, up to 6 calls total
+  │  Report writer: 1 cross-campus insight report (ephemeral prompt cache)
+  ▼
+GEMINI FLASH-LITE VERIFIER
+  │  1 call per cycle against the Sonnet report; fails open on error
+  │  If `overallPass=false AND retryInstructions` → 1 Sonnet regeneration,
+  │  delivered regardless of second verdict
+  ▼
+TELEGRAM DELIVERY
+  │  Arizona scripts, separator when both campuses exist, Cal Poly scripts
+  │  Report chunked at 4000 chars, sent as plain text after the scripts
+  ▼
+POST-RUN HISTORY SAVE
+  │  Live sends only; delivered source posts are written back to history
 ```
 
 ## Tech Stack
@@ -49,15 +64,20 @@ TELEGRAM (private channel)
 | `pipeline/scrapers/_common.py` | Built + verified | `tests/test_scrapers.py` (49 shared scraper tests) |
 | `pipeline/scrapers/tiktok.py` | Built + verified | `tests/test_scrapers.py` |
 | `pipeline/scrapers/instagram.py` | Built + verified | `tests/test_scrapers.py` |
-| `pipeline/analyzer.py` | Built + verified | `tests/test_analyzer.py` (28) |
+| `pipeline/analyzer_legacy.py` | Built + verified | `tests/test_analyzer.py` (28) |
 | `pipeline/script_generator.py` | Built + verified | `tests/test_script_generator.py` (21) |
-| `pipeline/delivery.py` | Built + verified | `tests/test_delivery.py` (18) |
-| `pipeline/main.py` | Built + verified | `tests/test_main.py` (13) |
+| `pipeline/delivery.py` | Built + verified | `tests/test_delivery.py` (29) |
+| `pipeline/main.py` | Built + verified | `tests/test_main.py` (13) + `tests/test_orchestrator.py` (5) |
 | `pipeline/history.py` | Built + verified | `tests/test_history.py` (3) |
 | `pipeline/http_utils.py` | Built + verified | Shared retry coverage via analyzer/script generator/delivery tests |
+| `pipeline/gemini_utils.py` | Built + verified | `tests/test_gemini_utils.py` (15) |
+| `pipeline/skills.py` | Built + verified | `tests/test_skills.py` (5) |
+| `pipeline/agents.py` | Built + verified | `tests/test_agents.py` (15) |
+| `pipeline/report_writer.py` | Built + verified | `tests/test_report_writer.py` (8) |
+| `pipeline/report_verifier.py` | Built + verified | `tests/test_report_verifier.py` (14) |
 | `logging_utils.py` | Built + verified | `tests/test_logging_setup.py` (2) |
 
-Full suite: **155 tests**
+Full suite: **228 tests**
 
 ## Setup
 
@@ -68,7 +88,7 @@ python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
 cp .env.template .env
 # Replace the placeholder values in .env with real credentials
-python3 -m unittest discover -s tests -v  # Verify setup (155 tests)
+python3 -m unittest discover -s tests -v  # Verify setup (228 tests)
 ```
 
 ## Usage
@@ -125,10 +145,10 @@ Runtime logs:
 
 ## Cost
 
-- **Gemini Flash-Lite:** Free tier is available on the Gemini Developer API; at the repo's current ceilings this stage is still negligible even on paid token pricing.
-- **RapidAPI / Scraptik:** 20 requests/run, 40 requests/day at the default twice-daily schedule. Actual cost depends on the current Scraptik plan.
-- **Claude Sonnet 4:** At current Anthropic list pricing and the repo's current prompt sizes, roughly low single-digit dollars per month at the default ceiling (about 12 calls/day, up to 6 scripts/run).
-- **Total:** Model spend remains modest at the current defaults; the main variable cost outside Sonnet is whichever Scraptik plan is active.
+- **Gemini Flash-Lite:** up to 31 calls/run and 62 calls/day (26 legacy analyzer + 4 lens agents + 1 verifier, twice daily).
+- **RapidAPI / Scraptik:** 20 requests/run and 40 requests/day at the default twice-daily schedule.
+- **Claude Sonnet 4:** up to 8 calls/run and 16 calls/day (6 scripts + 1 report + 1 optional retry, twice daily).
+- **Pricing note:** dollar cost is not fixed in the repo; it depends on the current Gemini, Anthropic, and Scraptik pricing active at runtime.
 
 ## Development
 
