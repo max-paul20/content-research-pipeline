@@ -21,6 +21,10 @@ logger = logging.getLogger(__name__)
 _MAX_MSGS_PER_MINUTE = 20
 _MSG_INTERVAL = max(3.5, 60.0 / _MAX_MSGS_PER_MINUTE)
 
+# Telegram's sendMessage hard cap is 4096 chars; keep headroom for trailing
+# newlines and any chunk-boundary whitespace we re-add on rejoin.
+_TELEGRAM_MESSAGE_LIMIT = 4000
+
 
 def deliver_scripts(
     scripts: List[Dict[str, Any]],
@@ -99,13 +103,17 @@ def deliver_scripts(
 
 
 def deliver_report(report: str, test_mode: bool = False) -> Dict[str, Any]:
-    """Send a single free-form report message to the Telegram channel.
+    """Send a free-form report to the Telegram channel, chunking as needed.
 
-    Reuses :func:`_send_or_log` for transport parity with
-    :func:`deliver_scripts`. Returns ``{"sent": 1, "failed": 0}`` on success
-    and ``{"sent": 0, "failed": 1}`` only when an actual send attempt fails.
+    Reports from the Sonnet writer routinely run 800–1200 words (~5–8k chars),
+    which exceeds Telegram's 4096-char sendMessage cap. We split the body at
+    paragraph boundaries and send each chunk as its own plain-text message.
+    ``parse_mode`` is deliberately omitted — Sonnet emits GFM-style ``**bold**``
+    which legacy Telegram Markdown v1 rejects.
+
     Empty reports and placeholder-token skips are treated as no-ops
-    (``{"sent": 0, "failed": 0}``), mirroring :func:`deliver_scripts`.
+    (``{"sent": 0, "failed": 0}``), mirroring :func:`deliver_scripts`. On a
+    live run, ``sent`` / ``failed`` are per-chunk counts.
     """
 
     if not report or not report.strip():
@@ -118,8 +126,18 @@ def deliver_report(report: str, test_mode: bool = False) -> Dict[str, Any]:
         logger.warning("TELEGRAM_BOT_TOKEN is missing or placeholder; skipping report delivery.")
         return {"sent": 0, "failed": 0}
 
-    ok = _send_or_log(report, dry)
-    return {"sent": 1 if ok else 0, "failed": 0 if ok else 1}
+    chunks = _chunk_text(report, _TELEGRAM_MESSAGE_LIMIT)
+    sent = 0
+    failed = 0
+    for idx, chunk in enumerate(chunks):
+        ok = _send_or_log(chunk, dry, parse_mode=None)
+        if ok:
+            sent += 1
+        else:
+            failed += 1
+        if idx < len(chunks) - 1:
+            _rate_limit(dry=dry)
+    return {"sent": sent, "failed": failed}
 
 
 def _format_message(script: Dict[str, Any]) -> str:
@@ -145,8 +163,13 @@ def _format_message(script: Dict[str, Any]) -> str:
     return "\n".join(parts)
 
 
-def _send_or_log(text: str, dry: bool) -> bool:
-    """Send a message via Telegram Bot API, or just log it in dry mode."""
+def _send_or_log(text: str, dry: bool, *, parse_mode: str | None = "Markdown") -> bool:
+    """Send a message via Telegram Bot API, or just log it in dry mode.
+
+    ``parse_mode=None`` sends the message as plain text. Callers carrying
+    GFM-flavored markdown (e.g., ``deliver_report``) should pass ``None`` so
+    Telegram's legacy Markdown v1 parser doesn't reject the body.
+    """
 
     label = _message_label(text)
 
@@ -155,14 +178,17 @@ def _send_or_log(text: str, dry: bool) -> bool:
         logger.info("[DRY RUN] Would send:\n%s", text)
         return True
 
+    payload: Dict[str, Any] = {
+        "chat_id": config.TELEGRAM_CHANNEL_ID,
+        "text": text,
+    }
+    if parse_mode is not None:
+        payload["parse_mode"] = parse_mode
+
     response = request_with_retries(
         lambda: requests.post(
             f"https://api.telegram.org/bot{config.TELEGRAM_BOT_TOKEN}/sendMessage",
-            json={
-                "chat_id": config.TELEGRAM_CHANNEL_ID,
-                "text": text,
-                "parse_mode": "Markdown",
-            },
+            json=payload,
             timeout=15,
         ),
         service="Telegram",
@@ -175,6 +201,39 @@ def _send_or_log(text: str, dry: bool) -> bool:
 
     logger.info("Telegram message sent: %s", label)
     return True
+
+
+def _chunk_text(text: str, limit: int) -> List[str]:
+    """Split ``text`` into chunks of at most ``limit`` chars.
+
+    Splits prefer paragraph boundaries (``\\n\\n``), then single newlines,
+    then spaces; falls back to a hard cut if no whitespace is found in the
+    window. Inter-chunk whitespace is stripped so rejoined output reads
+    naturally even though each chunk ships as its own Telegram message.
+    """
+
+    if len(text) <= limit:
+        return [text]
+
+    chunks: List[str] = []
+    remaining = text
+    while len(remaining) > limit:
+        window = remaining[:limit]
+        split_at = window.rfind("\n\n")
+        if split_at == -1:
+            split_at = window.rfind("\n")
+        if split_at == -1:
+            split_at = window.rfind(" ")
+        if split_at == -1:
+            split_at = limit  # no whitespace — hard cut
+        piece = remaining[:split_at].rstrip()
+        if piece:
+            chunks.append(piece)
+        remaining = remaining[split_at:].lstrip()
+
+    if remaining:
+        chunks.append(remaining)
+    return chunks
 
 
 def _message_label(text: str) -> str:
